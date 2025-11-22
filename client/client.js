@@ -1,4 +1,9 @@
-let ws = new WebSocket("ws://localhost:8080/ws");
+// Auto-detect local vs production server
+const isLocal = window.location.hostname === "localhost"
+    || window.location.hostname === "127.0.0.1"
+    || window.location.protocol === "file:";
+const wsUrl = isLocal ? "ws://localhost:8080/ws" : "ws://134.199.204.89/ws";
+let ws = new WebSocket(wsUrl);
 let myUID = "";
 let gameId = "";
 let currentTurn = "";
@@ -53,6 +58,30 @@ function clearGameState() {
     deleteCookie('tcg_gameId');
     deleteCookie('tcg_playerUid');
 }
+
+// Dark mode
+function toggleDarkMode() {
+    const isDark = document.body.classList.toggle('dark-mode');
+    setCookie('tcg_darkMode', isDark ? '1' : '0', 365);
+    updateDarkModeButton();
+}
+
+function updateDarkModeButton() {
+    const btn = document.querySelector('.dark-toggle');
+    if (btn) {
+        btn.textContent = document.body.classList.contains('dark-mode') ? 'Light Mode' : 'Dark Mode';
+    }
+}
+
+function loadDarkMode() {
+    if (getCookie('tcg_darkMode') === '1') {
+        document.body.classList.add('dark-mode');
+    }
+    updateDarkModeButton();
+}
+
+// Initialize dark mode on load
+loadDarkMode();
 
 ws.onopen = () => {
     log("Connected to server");
@@ -417,17 +446,32 @@ ws.onmessage = (msg) => {
                 // Update UI
                 hideReconnectButton();
                 showInGameLobby();
-                document.getElementById("game-controls").style.display = "block";
-                document.getElementById("chat-section").style.display = "block";
-                renderHand();
-                renderField();
-                renderLands();
-                renderOpponentField();
-                renderOpponentLands();
-                updateHealthDisplay();
-                updateManaPoolDisplay();
-                updateTurnStatus();
-                setStatus("Reconnected to game " + gameId);
+
+                // Check if still in mulligan phase
+                if (event.data.mulliganPhase && !event.data.mulliganDecided) {
+                    // Show mulligan UI - player hasn't decided yet
+                    showMulliganUI();
+                    renderHand();
+                    setStatus("Reconnected - Waiting for mulligan decision");
+                } else if (event.data.mulliganPhase && event.data.mulliganDecided) {
+                    // Player decided but waiting for opponent
+                    document.getElementById("game-controls").style.display = "block";
+                    renderHand();
+                    setStatus("Reconnected - Waiting for opponent's mulligan decision");
+                } else {
+                    // Game started - show full game UI
+                    document.getElementById("game-controls").style.display = "block";
+                    document.getElementById("chat-section").style.display = "block";
+                    renderHand();
+                    renderField();
+                    renderLands();
+                    renderOpponentField();
+                    renderOpponentLands();
+                    updateHealthDisplay();
+                    updateManaPoolDisplay();
+                    updateTurnStatus();
+                    setStatus("Reconnected to game " + gameId);
+                }
                 break;
 
             case "PlayerReconnected":
@@ -555,17 +599,19 @@ function joinGame() {
 
 function showInGameLobby() {
     document.getElementById("start-btn").style.display = "none";
-    document.getElementById("join-btn").style.display = "none";
+    document.getElementById("browse-btn").style.display = "none";
     document.getElementById("deck-select-area").style.display = "none";
     document.getElementById("leave-btn").style.display = "inline-block";
+    document.getElementById("game-list-container").style.display = "none";
     hideReconnectButton();
 }
 
 function showOutOfGameLobby() {
     document.getElementById("start-btn").style.display = "inline-block";
-    document.getElementById("join-btn").style.display = "inline-block";
+    document.getElementById("browse-btn").style.display = "inline-block";
     document.getElementById("deck-select-area").style.display = "block";
     document.getElementById("leave-btn").style.display = "none";
+    document.getElementById("game-list-container").style.display = "block";
 }
 
 function playCard(cardId) {
@@ -1229,6 +1275,7 @@ function leaveGame() {
     myManaPool = { White: 0, Blue: 0, Black: 0, Red: 0, Green: 0, Colorless: 0 };
 
     // Reset UI
+    hideMulliganUI();
     document.getElementById("game-controls").style.display = "none";
     document.getElementById("chat-section").style.display = "none";
     document.getElementById("chat-messages").innerHTML = "";

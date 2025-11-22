@@ -1,0 +1,174 @@
+================================================================================
+                           CARD GAME - RULES
+================================================================================
+
+TABLE OF CONTENTS
+-----------------
+1. Overview
+2. Setup & Mulligan
+3. Turn Structure
+4. Mana System
+5. Playing Cards
+6. Combat
+7. Abilities
+8. Winning the Game
+
+================================================================================
+1. OVERVIEW
+================================================================================
+
+A 1v1 trading card game where players summon creatures, manage mana, and battle
+to reduce their opponent's life to zero.
+
+================================================================================
+2. SETUP & MULLIGAN
+================================================================================
+
+STARTING CONDITIONS:
+- Each player starts with 30 life
+- Each player draws 5 cards
+- Fields start empty, mana pools start empty
+
+MULLIGAN PHASE:
+Before the game begins, each player may choose to:
+  - KEEP their hand, or
+  - MULLIGAN (shuffle hand back into deck and draw 5 new cards)
+
+Each player gets ONE mulligan decision. The game starts after both players
+have decided.
+
+================================================================================
+3. TURN STRUCTURE
+================================================================================
+
+On your turn, you may (in any order):
+  1. Play lands (max 1 per turn)
+  2. Tap lands for mana
+  3. Play creatures/spells using mana
+  4. Declare attacks with your creatures
+  5. End your turn
+
+AT END OF TURN:
+  - Creatures with Vigilance untap
+
+AT START OF YOUR NEXT TURN:
+  - All your cards untap
+  - Summoning sickness clears from your creatures
+  - Your mana pool empties
+  - Draw at least 1 card (draw up to 5 if hand is smaller)
+
+================================================================================
+4. MANA SYSTEM
+================================================================================
+
+MANA TYPES:
+  White, Blue, Black, Red, Green, Colorless
+
+GENERATING MANA:
+
+  Option 1 - TAP A LAND ON YOUR FIELD:
+    Click a land you've played to tap it. Its mana is added to your pool.
+
+  Option 2 - BURN A LAND FROM YOUR HAND:
+    Discard a land card from your hand to add its mana to your pool.
+    (The land goes to your discard pile)
+
+SPENDING MANA:
+  - Colored costs (White, Blue, etc.) must be paid with that exact color
+  - Colorless costs can be paid with any color of mana
+  - Unspent mana is lost at the start of your next turn
+
+================================================================================
+5. PLAYING CARDS
+================================================================================
+
+LANDS:
+  - Free to play (no mana cost)
+  - Maximum 1 land per turn
+  - Enter the field untapped
+  - Tap to produce mana
+
+CREATURES:
+  - Pay the mana cost shown on the card
+  - Enter the field with full health and untapped
+  - Have SUMMONING SICKNESS - cannot attack the turn they're played
+    (unless they have Haste)
+
+================================================================================
+6. COMBAT
+================================================================================
+
+STEP 1 - DECLARE ATTACKS:
+  - Click "Combat" to enter combat mode
+  - Select your untapped creatures (without summoning sickness) to attack
+  - Choose targets: the opponent OR one of their creatures
+  - Attacking creatures become tapped
+  - Click "Confirm Attacks"
+
+STEP 2 - DECLARE BLOCKERS (Defender):
+  - The defending player chooses which of their untapped creatures block
+  - Select a blocker, then click the attacker it will block
+  - Flying creatures can only be blocked by creatures with Flying or Reach
+  - Click "Confirm Blockers" or "No Blockers"
+
+STEP 3 - DAMAGE RESOLUTION:
+
+  UNBLOCKED ATTACKS:
+    - vs Player: Defender loses life equal to attacker's Attack
+    - vs Creature: Both creatures deal damage to each other simultaneously
+
+  BLOCKED ATTACKS:
+    - Attacker and blocker deal damage to each other simultaneously
+    - A creature dies when its health reaches 0 or below
+
+  FIRST STRIKE:
+    - Creatures with First Strike deal damage BEFORE normal creatures
+    - If First Strike damage kills the opponent, they don't hit back
+
+  DOUBLE STRIKE:
+    - Deals damage in BOTH the First Strike phase AND normal phase
+    - Effectively hits twice if it survives
+
+  TRAMPLE:
+    - Excess damage (beyond what kills the blocker) hits the original target
+
+================================================================================
+7. ABILITIES
+================================================================================
+
+HASTE
+  Can attack the same turn it enters the battlefield.
+  (Ignores summoning sickness)
+
+VIGILANCE
+  Untaps at end of your turn.
+  (Can attack and still be ready to block on opponent's turn)
+
+FLYING
+  Can only be blocked by creatures with Flying or Reach.
+
+REACH
+  Can block creatures with Flying.
+  (But cannot fly itself)
+
+FIRST STRIKE
+  Deals combat damage before creatures without First Strike.
+  If it kills the opponent first, they don't deal damage back.
+
+DOUBLE STRIKE
+  Deals damage twice - once in First Strike phase, once in normal phase.
+
+TRAMPLE
+  When blocked, excess damage beyond the blocker's health goes through
+  to the original target (player or creature).
+
+================================================================================
+8. WINNING THE GAME
+================================================================================
+
+VICTORY:
+  Reduce your opponent's life to 0 or below.
+
+================================================================================
+                              GOOD LUCK!
+================================================================================

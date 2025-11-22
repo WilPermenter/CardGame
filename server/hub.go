@@ -1,6 +1,7 @@
 package server
 
 import (
+    "card-game/game"
     "encoding/json"
     "sync"
 
@@ -30,8 +31,13 @@ func (h *Hub) Unregister(c *Connection) {
     defer h.mu.Unlock()
     delete(h.connections, c)
 
-    // Remove from game connections
+    // Remove from game connections and track disconnect
     if c.GameID != "" {
+        // Mark player as disconnected for cleanup tracking
+        if g := game.Manager.GetGame(c.GameID); g != nil && c.PlayerUID != "" {
+            g.MarkPlayerDisconnected(c.PlayerUID)
+        }
+
         conns := h.gameConns[c.GameID]
         for i, conn := range conns {
             if conn == c {

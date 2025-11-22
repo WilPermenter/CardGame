@@ -373,6 +373,9 @@ func (c *Connection) handleReconnectGame(action game.Action) {
     c.GameID = g.ID
     GameHub.JoinGame(c, g.ID)
 
+    // Clear disconnect status for cleanup tracking
+    g.MarkPlayerReconnected(action.PlayerUID)
+
     // Find opponent
     var opponentUID string
     var opponent *game.Player
@@ -416,6 +419,12 @@ func (c *Connection) handleReconnectGame(action game.Action) {
         opponentLife = opponent.Life
     }
 
+    // Check if player already made mulligan decision
+    mulliganDecided := false
+    if g.MulliganDecisions != nil {
+        mulliganDecided = g.MulliganDecisions[action.PlayerUID]
+    }
+
     events := []game.Event{
         {
             Type: "GameReconnected",
@@ -425,6 +434,8 @@ func (c *Connection) handleReconnectGame(action game.Action) {
                 "opponentUid":      opponentUID,
                 "currentTurn":      g.Turn,
                 "started":          g.Started,
+                "mulliganPhase":    g.MulliganPhase,
+                "mulliganDecided":  mulliganDecided,
                 "myHand":           player.Hand,
                 "myLife":           player.Life,
                 "myField":          myCreatures,

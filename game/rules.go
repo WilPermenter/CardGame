@@ -1,5 +1,7 @@
 package game
 
+import "time"
+
 // checkPriority determines if a player can take an action right now
 func (g *Game) checkPriority(playerUID string, actionType string) bool {
     // During combat, special priority rules apply
@@ -22,6 +24,9 @@ func (g *Game) checkPriority(playerUID string, actionType string) bool {
 }
 
 func (g *Game) HandleAction(a Action) []Event {
+    // Update activity timestamp for cleanup tracking
+    g.LastActivity = time.Now()
+
     // Game already over?
     if g.Winner != "" {
         return []Event{{Type: "GameOver", Data: map[string]interface{}{"winner": g.Winner}}}

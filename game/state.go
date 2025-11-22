@@ -2,8 +2,10 @@ package game
 
 import (
     "fmt"
+    "log"
     "math/rand"
     "sync"
+    "time"
 )
 
 type Game struct {
@@ -22,6 +24,10 @@ type Game struct {
     CombatPhase    string              // "", "attackers_declared", "blockers_declared"
     PendingAttacks []PendingAttack     // Attacks waiting for blockers/resolution
     AttackingPlayer string             // UID of player who declared attacks
+
+    // Cleanup tracking
+    LastActivity time.Time           // Updated on every action
+    Disconnects  map[string]time.Time // playerUID -> disconnect time
 }
 
 // PendingAttack represents an attack waiting for blocker assignment
@@ -367,4 +373,106 @@ func (g *Game) DrawInitialHands() map[string][]int {
         hands[uid] = drawn
     }
     return hands
+}
+
+// MarkPlayerDisconnected records when a player disconnected
+func (g *Game) MarkPlayerDisconnected(playerUID string) {
+    if g.Disconnects == nil {
+        g.Disconnects = make(map[string]time.Time)
+    }
+    g.Disconnects[playerUID] = time.Now()
+}
+
+// MarkPlayerReconnected clears disconnect status when player reconnects
+func (g *Game) MarkPlayerReconnected(playerUID string) {
+    if g.Disconnects != nil {
+        delete(g.Disconnects, playerUID)
+    }
+}
+
+// AllPlayersDisconnectedFor checks if all players have been disconnected for the given duration
+func (g *Game) AllPlayersDisconnectedFor(duration time.Duration) bool {
+    if g.Disconnects == nil || len(g.Disconnects) < len(g.Players) {
+        return false
+    }
+    cutoff := time.Now().Add(-duration)
+    for _, disconnectTime := range g.Disconnects {
+        if disconnectTime.After(cutoff) {
+            return false // Someone disconnected too recently
+        }
+    }
+    return true
+}
+
+// RemoveGame removes a game from the manager
+func (gm *GameManager) RemoveGame(gameID string) {
+    gm.mu.Lock()
+    defer gm.mu.Unlock()
+    if gm.waiting != nil && gm.waiting.ID == gameID {
+        gm.waiting = nil
+    }
+    delete(gm.games, gameID)
+    log.Printf("Game %s removed", gameID)
+}
+
+// GetAllGameIDs returns all game IDs for cleanup iteration
+func (gm *GameManager) GetAllGameIDs() []string {
+    gm.mu.RLock()
+    defer gm.mu.RUnlock()
+    ids := make([]string, 0, len(gm.games))
+    for id := range gm.games {
+        ids = append(ids, id)
+    }
+    return ids
+}
+
+// Cleanup constants
+const (
+    DisconnectTimeout = 1 * time.Minute  // Kill if both disconnected 1+ min
+    InactivityTimeout = 5 * time.Minute  // Kill if no activity 5+ min
+    CleanupInterval   = 30 * time.Second // Check every 30 seconds
+)
+
+// StartCleanupRoutine starts the background cleanup goroutine
+func (gm *GameManager) StartCleanupRoutine() {
+    go func() {
+        ticker := time.NewTicker(CleanupInterval)
+        defer ticker.Stop()
+        log.Println("Game cleanup routine started")
+        for range ticker.C {
+            gm.cleanupStaleGames()
+        }
+    }()
+}
+
+func (gm *GameManager) cleanupStaleGames() {
+    gameIDs := gm.GetAllGameIDs()
+    now := time.Now()
+
+    for _, gameID := range gameIDs {
+        g := gm.GetGame(gameID)
+        if g == nil {
+            continue
+        }
+
+        shouldRemove := false
+        reason := ""
+
+        // Check 1: Both players disconnected for 1+ minute
+        if len(g.Players) > 0 && g.AllPlayersDisconnectedFor(DisconnectTimeout) {
+            shouldRemove = true
+            reason = "both players disconnected"
+        }
+
+        // Check 2: No activity for 5+ minutes (only for started games)
+        if g.Started && !g.LastActivity.IsZero() && now.Sub(g.LastActivity) > InactivityTimeout {
+            shouldRemove = true
+            reason = "inactivity timeout"
+        }
+
+        if shouldRemove {
+            log.Printf("Removing game %s: %s", gameID, reason)
+            gm.RemoveGame(gameID)
+        }
+    }
 }

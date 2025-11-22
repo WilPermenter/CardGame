@@ -20,6 +20,9 @@ func main() {
     }
     log.Printf("Loaded %d decks", len(game.DeckDB))
 
+    // Start background cleanup routine for stale games
+    game.Manager.StartCleanupRoutine()
+
     router := server.NewRouter()
 
     log.Println("Server running on :8080")
