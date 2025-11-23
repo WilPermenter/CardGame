@@ -7,7 +7,7 @@ import "time"
 func (g *Game) checkPriority(playerUID string, actionType string) bool {
 	// During response window, only priority player can act
 	if g.CombatPhase == "response_window" {
-		if actionType == "play_instant" || actionType == "pass_priority" || actionType == "tap_card" {
+		if actionType == "play_instant" || actionType == "pass_priority" || actionType == "tap_card" || actionType == "burn_card" {
 			return playerUID == g.PriorityPlayer
 		}
 		return false

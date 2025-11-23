@@ -426,6 +426,11 @@ ws.onmessage = (msg) => {
                 if (event.data.player === myUID && event.data.manaPool) {
                     myManaPool = event.data.manaPool;
                     updateManaPoolDisplay();
+                    // Re-evaluate what can be cast in response window
+                    if (inResponseWindow) {
+                        refreshInstantAffordability();
+                        updateResponseUI();
+                    }
                 }
                 break;
 
@@ -565,6 +570,23 @@ ws.onmessage = (msg) => {
                     // Check if in draw phase
                     if (inDrawPhase && currentTurn === myUID) {
                         showDrawPhaseUI();
+                    }
+                    // Check if in combat response window
+                    if (event.data.combatPhase === "response_window") {
+                        inResponseWindow = true;
+                        hasPriority = event.data.priorityPlayer === myUID;
+                        attacksInProgress = event.data.pendingAttacks || [];
+                        // Build instants list from hand
+                        myInstants = [];
+                        for (const cardId of myHand) {
+                            const card = cardDB[cardId];
+                            if (card && card.CardType === "Instant") {
+                                myInstants.push({ cardId: cardId, name: card.Name });
+                            }
+                        }
+                        refreshInstantAffordability();
+                        showResponseUI();
+                        log("Reconnected during combat response - " + (hasPriority ? "You have priority" : "Waiting for opponent"));
                     }
                     setStatus("Reconnected to game " + gameId);
                 }
@@ -1114,6 +1136,32 @@ function formatCost(cost) {
     if (cost.Green) parts.push(cost.Green + "G");
     if (cost.Colorless) parts.push(cost.Colorless);
     return parts.join(" ") || "Free";
+}
+
+function canAffordCost(cost) {
+    if (!cost) return true;
+    const pool = myManaPool;
+    // Check each colored mana requirement
+    if ((cost.White || 0) > (pool.White || 0)) return false;
+    if ((cost.Blue || 0) > (pool.Blue || 0)) return false;
+    if ((cost.Black || 0) > (pool.Black || 0)) return false;
+    if ((cost.Red || 0) > (pool.Red || 0)) return false;
+    if ((cost.Green || 0) > (pool.Green || 0)) return false;
+    // Check colorless - can be paid with any mana
+    const coloredNeeded = (cost.White || 0) + (cost.Blue || 0) + (cost.Black || 0) + (cost.Red || 0) + (cost.Green || 0);
+    const coloredAvailable = (pool.White || 0) + (pool.Blue || 0) + (pool.Black || 0) + (pool.Red || 0) + (pool.Green || 0);
+    const colorlessNeeded = cost.Colorless || 0;
+    const totalAvailable = coloredAvailable + (pool.Colorless || 0);
+    return totalAvailable >= coloredNeeded + colorlessNeeded;
+}
+
+function refreshInstantAffordability() {
+    for (const instant of myInstants) {
+        const card = cardDB[instant.cardId];
+        if (card) {
+            instant.canAfford = canAffordCost(card.Cost);
+        }
+    }
 }
 
 function formatAbilities(abilities) {

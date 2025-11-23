@@ -1340,7 +1340,7 @@
     "Attack": 0,
     "Defense": 0,
     "CardType": "Instant",
-    "CardText": "Target creature gets +0/+3 until end of combat.",
+    "CardText": "Target creature gets +0/+3.",
     "Abilities": [],
     "ValidAttackTargets": "",
     "CustomScript": "Buff(0, 3, 'target')"
@@ -1352,7 +1352,7 @@
     "Attack": 0,
     "Defense": 0,
     "CardType": "Instant",
-    "CardText": "Target creature gets +2/+2 until end of combat.",
+    "CardText": "Target creature gets +2/+2.",
     "Abilities": [],
     "ValidAttackTargets": "",
     "CustomScript": "Buff(2, 2, 'target')"
@@ -1364,7 +1364,7 @@
     "Attack": 0,
     "Defense": 0,
     "CardType": "Instant",
-    "CardText": "Target creature gets +1/+2 until end of combat.",
+    "CardText": "Target creature gets +1/+2.",
     "Abilities": [],
     "ValidAttackTargets": "",
     "CustomScript": "Buff(1, 2, 'target')"
@@ -1376,7 +1376,7 @@
     "Attack": 0,
     "Defense": 0,
     "CardType": "Instant",
-    "CardText": "Tap target creature. It doesn't untap next turn.",
+    "CardText": "Tap target creature.",
     "Abilities": [],
     "ValidAttackTargets": "",
     "CustomScript": "TapCreature('target')"
@@ -1448,7 +1448,7 @@
     "Attack": 0,
     "Defense": 0,
     "CardType": "Instant",
-    "CardText": "Target creature gets +3/+3 until end of combat.",
+    "CardText": "Target creature gets +3/+3.",
     "Abilities": [],
     "ValidAttackTargets": "",
     "CustomScript": "Buff(3, 3, 'target')"
@@ -1460,7 +1460,7 @@
     "Attack": 0,
     "Defense": 0,
     "CardType": "Instant",
-    "CardText": "Target creature gets +2/+2 until end of combat.",
+    "CardText": "Target creature gets +2/+2.",
     "Abilities": [],
     "ValidAttackTargets": "",
     "CustomScript": "Buff(2, 2, 'target')"
@@ -1472,7 +1472,7 @@
     "Attack": 0,
     "Defense": 0,
     "CardType": "Instant",
-    "CardText": "Target creature gets +4/+4 until end of combat.",
+    "CardText": "Target creature gets +4/+4.",
     "Abilities": [],
     "ValidAttackTargets": "",
     "CustomScript": "Buff(4, 4, 'target')"
