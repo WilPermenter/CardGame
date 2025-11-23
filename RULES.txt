@@ -1,5 +1,5 @@
 ================================================================================
-                           CARD GAME - RULES
+                          CARD GAME - RULES
 ================================================================================
 
 TABLE OF CONTENTS
@@ -8,7 +8,7 @@ TABLE OF CONTENTS
 2. Setup & Mulligan
 3. Turn Structure
 4. Mana System
-5. Playing Cards
+5. Card Types
 6. Combat
 7. Abilities
 8. Winning the Game
@@ -17,8 +17,8 @@ TABLE OF CONTENTS
 1. OVERVIEW
 ================================================================================
 
-A 1v1 trading card game where players summon creatures, manage mana, and battle
-to reduce their opponent's life to zero.
+A 1v1 trading card game where players summon creatures, cast spells, manage
+mana, and battle to reduce their opponent's life to zero.
 
 ================================================================================
 2. SETUP & MULLIGAN
@@ -26,7 +26,9 @@ to reduce their opponent's life to zero.
 
 STARTING CONDITIONS:
 - Each player starts with 30 life
-- Each player draws 5 cards
+- Each player draws 5 cards from their Main Deck
+- Each player draws 2 cards from their Vault (land deck)
+- Each player has a Leader card (displayed separately)
 - Fields start empty, mana pools start empty
 
 MULLIGAN PHASE:
@@ -44,7 +46,7 @@ have decided.
 On your turn, you may (in any order):
   1. Play lands (max 1 per turn)
   2. Tap lands for mana
-  3. Play creatures/spells using mana
+  3. Play creatures/spells/leader using mana
   4. Declare attacks with your creatures
   5. End your turn
 
@@ -55,14 +57,14 @@ AT START OF YOUR NEXT TURN:
   - All your cards untap
   - Summoning sickness clears from your creatures
   - Your mana pool empties
-  - Draw at least 1 card (draw up to 5 if hand is smaller)
+  - Draw at least 1 card (draw up to minimum hand size if hand is smaller)
 
 ================================================================================
 4. MANA SYSTEM
 ================================================================================
 
 MANA TYPES:
-  White, Blue, Black, Red, Green, Colorless
+  White (W), Blue (U), Black (B), Red (R), Green (G), Colorless
 
 GENERATING MANA:
 
@@ -79,20 +81,38 @@ SPENDING MANA:
   - Unspent mana is lost at the start of your next turn
 
 ================================================================================
-5. PLAYING CARDS
+5. CARD TYPES
 ================================================================================
 
 LANDS:
   - Free to play (no mana cost)
   - Maximum 1 land per turn
   - Enter the field untapped
-  - Tap to produce mana
+  - Tap to produce mana of their color
 
 CREATURES:
   - Pay the mana cost shown on the card
   - Enter the field with full health and untapped
   - Have SUMMONING SICKNESS - cannot attack the turn they're played
     (unless they have Haste)
+  - Have Attack and Defense stats
+
+SPELLS:
+  - Pay the mana cost to cast
+  - One-time effect, then goes to discard pile
+  - Can only be played on your turn (during main phase)
+
+INSTANTS:
+  - Pay the mana cost to cast
+  - One-time effect, then goes to discard pile
+  - Can ONLY be played during the Combat Response Window
+  - Used to buff creatures, deal damage, or control the battlefield
+
+LEADERS:
+  - Special creature card unique to your deck
+  - Played like a creature (pay mana cost)
+  - Usually has powerful stats and abilities
+  - Displayed in a special area near your hand
 
 ================================================================================
 6. COMBAT
@@ -105,20 +125,27 @@ STEP 1 - DECLARE ATTACKS:
   - Attacking creatures become tapped
   - Click "Confirm Attacks"
 
-STEP 2 - DECLARE BLOCKERS (Defender):
-  - The defending player chooses which of their untapped creatures block
-  - Select a blocker, then click the attacker it will block
-  - Flying creatures can only be blocked by creatures with Flying or Reach
-  - Click "Confirm Blockers" or "No Blockers"
+STEP 2 - RESPONSE WINDOW (Instants):
+  After attacks are declared, both players get a chance to play Instants:
+
+  - DEFENDER gets priority first
+  - Play instants to buff your creatures, damage attackers, tap creatures, etc.
+  - Click "Pass" to pass priority to opponent
+  - Priority alternates until BOTH players pass consecutively
+  - Then combat damage resolves
+
+  INSTANT EFFECTS BY COLOR:
+    White/Green - Buff your creatures (+Attack/+Defense)
+    Red - Deal direct damage to creatures
+    Blue - Tap creatures, bounce creatures to hand
 
 STEP 3 - DAMAGE RESOLUTION:
 
-  UNBLOCKED ATTACKS:
-    - vs Player: Defender loses life equal to attacker's Attack
-    - vs Creature: Both creatures deal damage to each other simultaneously
+  ATTACKS VS PLAYER:
+    - Defender loses life equal to attacker's Attack
 
-  BLOCKED ATTACKS:
-    - Attacker and blocker deal damage to each other simultaneously
+  ATTACKS VS CREATURE:
+    - Both creatures deal damage to each other simultaneously
     - A creature dies when its health reaches 0 or below
 
   FIRST STRIKE:
@@ -130,7 +157,12 @@ STEP 3 - DAMAGE RESOLUTION:
     - Effectively hits twice if it survives
 
   TRAMPLE:
-    - Excess damage (beyond what kills the blocker) hits the original target
+    - Excess damage (beyond what kills the target) hits the defending player
+
+TAUNT RESTRICTION:
+  - If opponent has untapped creatures with TAUNT, you MUST attack them
+  - Cannot attack the player directly while Taunt creatures are untapped
+  - Cannot attack non-Taunt creatures while Taunt creatures are untapped
 
 ================================================================================
 7. ABILITIES
@@ -159,8 +191,12 @@ DOUBLE STRIKE
   Deals damage twice - once in First Strike phase, once in normal phase.
 
 TRAMPLE
-  When blocked, excess damage beyond the blocker's health goes through
-  to the original target (player or creature).
+  Excess damage beyond the target creature's health goes through
+  to the defending player.
+
+TAUNT
+  Enemy creatures MUST attack this creature if able.
+  Protects your other creatures and your life total.
 
 ================================================================================
 8. WINNING THE GAME
@@ -170,5 +206,5 @@ VICTORY:
   Reduce your opponent's life to 0 or below.
 
 ================================================================================
-                              GOOD LUCK!
+                             GOOD LUCK!
 ================================================================================
