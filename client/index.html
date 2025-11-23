@@ -88,6 +88,62 @@
         .health-box.targeted { border-color: #9c27b0; background: #f3e5f5; box-shadow: 0 0 10px #9c27b0; }
         /* Abilities styling */
         .card-abilities { font-size: 10px; color: #673ab7; font-style: italic; margin-top: 3px; }
+        /* Card text styling */
+        .card-text { font-size: 10px; color: #555; margin: 4px 0; line-height: 1.3; }
+        body.dark-mode .card-text { color: #aaa; }
+        /* Tooltip for field cards */
+        .field-card { position: relative; }
+        .field-card .card-tooltip {
+            display: none;
+            position: absolute;
+            bottom: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #333;
+            color: #fff;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 11px;
+            white-space: normal;
+            width: 180px;
+            z-index: 100;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+            margin-bottom: 5px;
+        }
+        .field-card:hover .card-tooltip { display: block; }
+        .field-card .card-tooltip::after {
+            content: '';
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            border: 6px solid transparent;
+            border-top-color: #333;
+        }
+        body.dark-mode .field-card .card-tooltip { background: #1a1a1a; border: 1px solid #444; }
+        /* Leader card styles */
+        .leader-area { display: flex; gap: 20px; margin: 15px 0; }
+        .leader-card {
+            border: 3px solid #ffd700;
+            border-radius: 10px;
+            padding: 12px;
+            width: 220px;
+            background: linear-gradient(135deg, #fff9e6 0%, #fff3cc 100%);
+            box-shadow: 0 0 10px rgba(255, 215, 0, 0.5);
+        }
+        .leader-card .card-name { font-weight: bold; margin-bottom: 5px; color: #b8860b; }
+        .leader-card .card-stats { color: #666; }
+        .leader-card .card-text { font-size: 10px; color: #555; margin: 6px 0; line-height: 1.3; font-style: italic; }
+        .leader-card .leader-label { font-size: 10px; color: #daa520; text-transform: uppercase; letter-spacing: 1px; }
+        .leader-card.opponent { border-color: #ff6b6b; background: linear-gradient(135deg, #ffe6e6 0%, #ffcccc 100%); box-shadow: 0 0 10px rgba(255, 107, 107, 0.5); }
+        .leader-card.opponent .card-name { color: #c0392b; }
+        .leader-card.opponent .leader-label { color: #e74c3c; }
+        body.dark-mode .leader-card { background: linear-gradient(135deg, #3d3520 0%, #4d4530 100%); border-color: #ffd700; }
+        body.dark-mode .leader-card .card-name { color: #ffd700; }
+        body.dark-mode .leader-card .card-stats { color: #ccc; }
+        body.dark-mode .leader-card .card-text { color: #aaa; }
+        body.dark-mode .leader-card.opponent { background: linear-gradient(135deg, #3d2525 0%, #4d3030 100%); border-color: #ff6b6b; }
+        body.dark-mode .leader-card.opponent .card-name { color: #ff6b6b; }
         /* Blocking styles */
         .field-card.can-block { border-color: #00bcd4; background: #e0f7fa; }
         .field-card.selected-blocker { border-color: #00bcd4; background: #b2ebf2; box-shadow: 0 0 10px #00bcd4; }
@@ -95,6 +151,25 @@
         .field-card.blockable { border-color: #ff5722; background: #fff3e0; animation: pulse 1s infinite; }
         .field-card.being-blocked { border-color: #607d8b; background: #eceff1; opacity: 0.7; }
         @keyframes pulse { 0%, 100% { box-shadow: 0 0 5px #ff5722; } 50% { box-shadow: 0 0 15px #ff5722; } }
+        /* Instant card buttons */
+        .instant-btn {
+            background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
+            border: 2px solid #2196f3;
+            border-radius: 6px;
+            padding: 8px 12px;
+            cursor: pointer;
+            text-align: center;
+            min-width: 100px;
+            transition: all 0.2s;
+        }
+        .instant-btn:hover:not(.disabled) { background: linear-gradient(135deg, #bbdefb 0%, #90caf9 100%); transform: scale(1.05); }
+        .instant-btn.selected { border-color: #ff9800; box-shadow: 0 0 10px #ff9800; background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%); }
+        .instant-btn.disabled { opacity: 0.5; cursor: not-allowed; border-color: #999; }
+        body.dark-mode .instant-btn { background: linear-gradient(135deg, #1e3a5f 0%, #2c5282 100%); border-color: #4299e1; color: #fff; }
+        body.dark-mode .instant-btn.selected { background: linear-gradient(135deg, #553c00 0%, #744e00 100%); border-color: #ff9800; }
+        body.dark-mode #response-controls { background: #3d3520; border-color: #ff9800; }
+        body.dark-mode #response-controls h4 { color: #ff9800; }
+        body.dark-mode #response-status { color: #ccc; }
         /* Lobby/Game list styles */
         .game-item {
             display: flex;
@@ -165,11 +240,15 @@
         body.dark-mode .hide-btn { background: #444; border-color: #555; color: #e0e0e0; }
         #mulligan-controls { background: #fff3e0; }
         body.dark-mode #mulligan-controls { background: #3d3525; color: #e0e0e0; }
+        #draw-phase-controls { background: #e3f2fd; }
+        body.dark-mode #draw-phase-controls { background: #263238; color: #e0e0e0; }
         body.dark-mode .dark-toggle { background: #e0e0e0; color: #1a1a1a; }
         body.dark-mode .dark-toggle:hover { background: #fff; }
         body.dark-mode #game-list-container { border-color: #444; }
+        /* Chat styling */
+        #chat-messages { background: #f5f5f5; }
         body.dark-mode #chat-section { background: #252525; border-color: #444; }
-        body.dark-mode #chat-messages { background: #1a1a1a; color: #e0e0e0; }
+        body.dark-mode #chat-messages { background: #1e1e1e; color: #e0e0e0; border: 1px solid #444; }
         body.dark-mode #chat-input { background: #2d2d2d; color: #e0e0e0; border-color: #555; }
     </style>
 </head>
@@ -214,7 +293,7 @@
             <button class="hide-btn" onclick="toggleSection(this)">hide</button>
         </div>
         <div class="section-content">
-            <div id="chat-messages" style="background:#f5f5f5; padding:10px; height:150px; overflow-y:auto; margin-bottom:10px; border-radius:4px;"></div>
+            <div id="chat-messages" style="padding:10px; height:150px; overflow-y:auto; margin-bottom:10px; border-radius:4px;"></div>
             <div style="display:flex; gap:5px;">
                 <input type="text" id="chat-input" placeholder="Type a message..." style="flex:1; padding:8px;" onkeypress="if(event.key==='Enter')sendChat()">
                 <button onclick="sendChat()" style="background:#2196f3; color:white; border:none; padding:8px 16px; cursor:pointer;">Send</button>
@@ -255,13 +334,28 @@
                 <h4>Your Lands (<span id="lands-count">0</span>) | Mana Pool: <span id="mana-display" class="mana-pool">0</span></h4>
                 <div id="lands" class="lands"></div>
             </div>
+            <div class="leader-area">
+                <div>
+                    <h4>Your Leader</h4>
+                    <div id="my-leader" class="leader-card"></div>
+                </div>
+                <div>
+                    <h4>Opponent's Leader</h4>
+                    <div id="opponent-leader" class="leader-card opponent"></div>
+                </div>
+            </div>
             <div class="hand-area">
-                <h4>Your Hand (<span id="hand-count">0</span>) | Deck: <span id="deck-count">0</span> | Discard: <span id="discard-count">0</span></h4>
+                <h4>Your Hand (<span id="hand-count">0</span>) | Deck: <span id="deck-count">0</span> | Vault: <span id="vault-count">0</span> | Discard: <span id="discard-count">0</span></h4>
                 <div id="hand" class="hand"></div>
                 <div id="mulligan-controls" style="display:none; margin-top:10px; padding:12px; border-radius:8px; text-align:center;">
                     <span style="margin-right:15px; font-weight:bold;">Mulligan Phase:</span>
                     <button onclick="keepHand()" style="background:#4caf50; color:white; border:none; padding:8px 16px; margin:0 5px; cursor:pointer; border-radius:4px;">Keep Hand</button>
                     <button onclick="takeMulligan()" style="background:#ff9800; color:white; border:none; padding:8px 16px; margin:0 5px; cursor:pointer; border-radius:4px;">Mulligan</button>
+                </div>
+                <div id="draw-phase-controls" style="display:none; margin-top:10px; padding:12px; border-radius:8px; text-align:center;">
+                    <span style="margin-right:15px; font-weight:bold;">Draw Phase:</span>
+                    <button id="draw-main-btn" onclick="drawFromMain()" style="background:#2196f3; color:white; border:none; padding:8px 16px; margin:0 5px; cursor:pointer; border-radius:4px;">Draw from Deck</button>
+                    <button id="draw-vault-btn" onclick="drawFromVault()" style="background:#9c27b0; color:white; border:none; padding:8px 16px; margin:0 5px; cursor:pointer; border-radius:4px;">Draw from Vault</button>
                 </div>
             </div>
             <div style="margin: 10px 0;">
@@ -274,6 +368,13 @@
             </div>
             <p class="status" id="combat-status"></p>
             <p class="status" id="blocking-status" style="display:none; color:#e91e63;"></p>
+            <!-- Response window controls -->
+            <div id="response-controls" style="display:none; margin:15px 0; padding:15px; border:2px solid #ff9800; border-radius:8px; background:#fff8e1;">
+                <h4 style="margin:0 0 10px 0; color:#e65100;">Combat Response</h4>
+                <p id="response-status" style="margin:0 0 10px 0; color:#666;"></p>
+                <div id="response-instants" style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px;"></div>
+                <button id="pass-priority-btn" onclick="passPriority()" style="background:#9e9e9e; color:white; border:none; padding:8px 20px; border-radius:4px; cursor:pointer;">Pass</button>
+            </div>
             <p class="status" id="turn-status"></p>
         </div>
     </div>

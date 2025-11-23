@@ -20,10 +20,17 @@ type Game struct {
     MulliganPhase     bool            // true while waiting for mulligan decisions
     MulliganDecisions map[string]bool // tracks each player's decision (true = decided)
 
+    // Draw phase state
+    DrawPhase bool // true when active player must draw before taking other actions
+
     // Combat state
-    CombatPhase    string              // "", "attackers_declared", "blockers_declared"
+    CombatPhase    string              // "", "attackers_declared", "response_window"
     PendingAttacks []PendingAttack     // Attacks waiting for blockers/resolution
     AttackingPlayer string             // UID of player who declared attacks
+
+    // Response window state (for instants during combat)
+    PriorityPlayer string          // UID of player who has priority to play instants
+    PassedPlayers  map[string]bool // Tracks which players passed priority consecutively
 
     // Cleanup tracking
     LastActivity time.Time           // Updated on every action
@@ -73,7 +80,8 @@ func (g *Game) NewFieldCard(cardID int, owner, castedBy string) *FieldCard {
 type Player struct {
     UID                 string
     Hand                []int
-    DrawPile            []int        // Shuffled cards to draw from
+    DrawPile            []int        // Shuffled main deck (creatures) to draw from
+    VaultPile           []int        // Shuffled vault (lands) to draw from
     Discard             []int        // Played/discarded cards
     Field               []*FieldCard // Cards on the battlefield
     Life                int
@@ -82,7 +90,7 @@ type Player struct {
     ManaPool            ManaCost     // Current mana available to spend
     LandsPerTurn        int          // Max lands that can be played per turn (default 1)
     LandsPlayedThisTurn int          // Lands played this turn
-    MinHandLimit        int          // Minimum hand size to draw up to (default 5)
+    MinHandLimit        int          // Minimum hand size to draw up to (default 1)
 }
 
 // GetAvailableMana counts the total mana available from lands on the field
@@ -161,7 +169,28 @@ func (fc *FieldCard) IsDead() bool {
     return fc.CurrentHealth <= 0
 }
 
-const InitialHandSize = 5
+const InitialMainDeckDraw = 5
+const InitialVaultDraw = 2
+const DefaultMinHandLimit = 1
+const DefaultLandsPerTurn = 1
+const DefaultLife = 30
+
+// NewPlayer creates a new player with a deck
+func NewPlayer(uid string, deck Deck) *Player {
+    return &Player{
+        UID:          uid,
+        Hand:         []int{},
+        DrawPile:     ShuffleDeck(deck.MainDeck),
+        VaultPile:    ShuffleDeck(deck.Vault),
+        Discard:      []int{},
+        Field:        []*FieldCard{},
+        Life:         DefaultLife,
+        DeckID:       deck.ID,
+        Leader:       deck.Leader,
+        LandsPerTurn: DefaultLandsPerTurn,
+        MinHandLimit: DefaultMinHandLimit,
+    }
+}
 
 // ShuffleDeck creates a shuffled draw pile from a deck
 func ShuffleDeck(cards []int) []int {
@@ -173,12 +202,24 @@ func ShuffleDeck(cards []int) []int {
     return pile
 }
 
-// DrawCards draws n cards from a player's draw pile
+// DrawCards draws n cards from the main deck (DrawPile)
 func (p *Player) DrawCards(n int) []int {
     drawn := []int{}
     for i := 0; i < n && len(p.DrawPile) > 0; i++ {
         card := p.DrawPile[0]
         p.DrawPile = p.DrawPile[1:]
+        p.Hand = append(p.Hand, card)
+        drawn = append(drawn, card)
+    }
+    return drawn
+}
+
+// DrawFromVault draws n cards from the vault (land deck)
+func (p *Player) DrawFromVault(n int) []int {
+    drawn := []int{}
+    for i := 0; i < n && len(p.VaultPile) > 0; i++ {
+        card := p.VaultPile[0]
+        p.VaultPile = p.VaultPile[1:]
         p.Hand = append(p.Hand, card)
         drawn = append(drawn, card)
     }
@@ -210,18 +251,7 @@ func (gm *GameManager) CreateGame(playerUID string, deckID int) (*Game, *Player,
     gameID := fmt.Sprintf("game_%d", gm.nextID)
     gm.nextID++
 
-    player := &Player{
-        UID:          playerUID,
-        Hand:         []int{},
-        DrawPile:     ShuffleDeck(deck.Cards),
-        Discard:      []int{},
-        Field:        []*FieldCard{},
-        Life:         30,
-        DeckID:       deckID,
-        Leader:       deck.Leader,
-        LandsPerTurn: 1,
-        MinHandLimit: 5,
-    }
+    player := NewPlayer(playerUID, deck)
 
     g := &Game{
         ID:             gameID,
@@ -257,18 +287,7 @@ func (gm *GameManager) JoinGame(playerUID string, deckID int) (*Game, *Player, e
         return nil, nil, fmt.Errorf("already in this game")
     }
 
-    player := &Player{
-        UID:          playerUID,
-        Hand:         []int{},
-        DrawPile:     ShuffleDeck(deck.Cards),
-        Discard:      []int{},
-        Field:        []*FieldCard{},
-        Life:         30,
-        DeckID:       deckID,
-        Leader:       deck.Leader,
-        LandsPerTurn: 1,
-        MinHandLimit: 5,
-    }
+    player := NewPlayer(playerUID, deck)
 
     g.Players[playerUID] = player
     gm.waiting = nil // game is full
@@ -339,18 +358,7 @@ func (gm *GameManager) JoinSpecificGame(gameID, playerUID string, deckID int) (*
         return nil, nil, fmt.Errorf("deck not found")
     }
 
-    player := &Player{
-        UID:          playerUID,
-        Hand:         []int{},
-        DrawPile:     ShuffleDeck(deck.Cards),
-        Discard:      []int{},
-        Field:        []*FieldCard{},
-        Life:         30,
-        DeckID:       deckID,
-        Leader:       deck.Leader,
-        LandsPerTurn: 1,
-        MinHandLimit: 5,
-    }
+    player := NewPlayer(playerUID, deck)
 
     g.Players[playerUID] = player
     if gm.waiting == g {
@@ -365,14 +373,12 @@ func (gm *GameManager) JoinSpecificGame(gameID, playerUID string, deckID int) (*
     return g, player, nil
 }
 
-// DrawInitialHands draws starting hands for all players
-func (g *Game) DrawInitialHands() map[string][]int {
-    hands := make(map[string][]int)
-    for uid, player := range g.Players {
-        drawn := player.DrawCards(InitialHandSize)
-        hands[uid] = drawn
+// DrawInitialHands draws starting hands for all players (5 from main deck, 2 from vault)
+func (g *Game) DrawInitialHands() {
+    for _, player := range g.Players {
+        player.DrawCards(InitialMainDeckDraw)
+        player.DrawFromVault(InitialVaultDraw)
     }
-    return hands
 }
 
 // MarkPlayerDisconnected records when a player disconnected

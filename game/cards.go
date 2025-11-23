@@ -135,6 +135,8 @@ func (c Card) GetProvidedMana() ManaCost {
 			return ManaCost{Red: 1}
 		case contains(c.Name, "Green"):
 			return ManaCost{Green: 1}
+		case contains(c.Name, "Omni"):
+			return ManaCost{Green: 1, Red: 1, Black: 1, Blue: 1, White: 1}
 		}
 	}
 	return ManaCost{}

@@ -16,7 +16,7 @@ type BlockerDeclaration struct {
 
 type Action struct {
     PlayerUID  string               `json:"playerUid"`
-    Type       string               `json:"type"` // "start_game", "join_game", "play_card", "end_turn", "tap_card", "declare_attacks", etc.
+    Type       string               `json:"type"` // "start_game", "join_game", "play_card", "end_turn", "tap_card", "declare_attacks", "draw_card", etc.
     GameID     string               `json:"gameId"`
     CardID     int                  `json:"cardId"`
     TargetID   int                  `json:"targetId"`
@@ -25,4 +25,5 @@ type Action struct {
     Attacks    []AttackDeclaration  `json:"attacks"`    // For batch combat declarations
     Blockers   []BlockerDeclaration `json:"blockers"`   // For blocker assignments
     Message    string               `json:"message"`    // For chat messages
+    Source     string               `json:"source"`     // For draw_card: "main" or "vault"
 }

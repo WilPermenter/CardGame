@@ -180,6 +180,7 @@ func (c *Connection) handleJoinGame(action game.Action) {
             "hand":        player.Hand,
             "leader":      player.Leader,
             "deckSize":    len(player.DrawPile),
+            "vaultSize":   len(player.VaultPile),
             "discardSize": len(player.Discard),
         }
     }
@@ -237,6 +238,7 @@ func (c *Connection) handleJoinSpecificGame(action game.Action) {
             "hand":        player.Hand,
             "leader":      player.Leader,
             "deckSize":    len(player.DrawPile),
+            "vaultSize":   len(player.VaultPile),
             "discardSize": len(player.Discard),
         }
     }
@@ -415,8 +417,10 @@ func (c *Connection) handleReconnectGame(action game.Action) {
     }
 
     opponentLife := 30
+    opponentLeader := 0
     if opponent != nil {
         opponentLife = opponent.Life
+        opponentLeader = opponent.Leader
     }
 
     // Check if player already made mulligan decision
@@ -434,6 +438,7 @@ func (c *Connection) handleReconnectGame(action game.Action) {
                 "opponentUid":      opponentUID,
                 "currentTurn":      g.Turn,
                 "started":          g.Started,
+                "drawPhase":        g.DrawPhase,
                 "mulliganPhase":    g.MulliganPhase,
                 "mulliganDecided":  mulliganDecided,
                 "myHand":           player.Hand,
@@ -442,10 +447,13 @@ func (c *Connection) handleReconnectGame(action game.Action) {
                 "myLands":          myLands,
                 "myManaPool":       player.ManaPool,
                 "myDeckSize":       len(player.DrawPile),
+                "myVaultSize":      len(player.VaultPile),
                 "myDiscardSize":    len(player.Discard),
+                "myLeader":         player.Leader,
                 "opponentLife":     opponentLife,
                 "opponentField":    opponentCreatures,
                 "opponentLands":    opponentLands,
+                "opponentLeader":   opponentLeader,
             },
         },
     }

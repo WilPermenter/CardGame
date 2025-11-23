@@ -6,13 +6,15 @@ import (
 	"os"
 )
 
-const MaxDeckSize = 39
+const MaxMainDeckSize = 30
+const MaxVaultSize = 15
 
 type Deck struct {
-	ID     int    `json:"ID"`
-	Name   string `json:"Name"`
-	Leader int    `json:"Leader"` // Card ID of the leader
-	Cards  []int  `json:"Cards"`  // Array of card IDs (max 39)
+	ID       int    `json:"ID"`
+	Name     string `json:"Name"`
+	Leader   int    `json:"Leader"`   // Card ID of the leader
+	MainDeck []int  `json:"MainDeck"` // Creature cards
+	Vault    []int  `json:"Vault"`    // Land cards
 }
 
 var DeckDB = map[int]Deck{}
@@ -29,8 +31,11 @@ func LoadDecks(path string) error {
 	}
 
 	for _, deck := range decks {
-		if len(deck.Cards) > MaxDeckSize {
-			return fmt.Errorf("deck %q has %d cards, max is %d", deck.Name, len(deck.Cards), MaxDeckSize)
+		if len(deck.MainDeck) > MaxMainDeckSize {
+			return fmt.Errorf("deck %q has %d main deck cards, max is %d", deck.Name, len(deck.MainDeck), MaxMainDeckSize)
+		}
+		if len(deck.Vault) > MaxVaultSize {
+			return fmt.Errorf("deck %q has %d vault cards, max is %d", deck.Name, len(deck.Vault), MaxVaultSize)
 		}
 		DeckDB[deck.ID] = deck
 	}

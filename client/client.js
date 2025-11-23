@@ -14,23 +14,35 @@ let myHand = [];
 let myField = []; // Creature FieldCard objects
 let myLands = []; // Land FieldCard objects
 let myDeckSize = 0;
+let myVaultSize = 0;
 let myDiscardSize = 0;
 let opponentField = []; // Opponent's creatures
 let opponentLands = []; // Opponent's lands
 let myManaPool = { White: 0, Blue: 0, Black: 0, Red: 0, Green: 0, Colorless: 0 };
 let cardDB = {}; // Local card database
+let inDrawPhase = false; // True when player must choose to draw
+let myLeader = 0; // Leader card ID
+let opponentLeader = 0; // Opponent's leader card ID
 
 // Combat state
 let combatMode = false;
 let pendingAttacks = []; // Array of {attackerInstanceId, targetType, targetInstanceId, targetPlayerUid}
 let selectedAttacker = null; // instanceId of creature being assigned a target
 
-// Blocking state
-let blockingMode = false;
-let incomingAttacks = []; // Attacks we need to block
-let availableBlockers = []; // Our creatures that can block
-let pendingBlocks = []; // Array of {blockerInstanceId, attackerInstanceId}
-let selectedBlocker = null; // instanceId of creature we're assigning to block
+// Response window state (for playing instants during combat)
+let responseMode = false;
+let inResponseWindow = false;
+let hasPriority = false;
+let myInstants = []; // Instants I can play
+let selectedInstant = null; // Card ID of instant being played
+let attacksInProgress = []; // Attacks we're responding to
+
+// Blocking state (DISABLED - blocking removed)
+// let blockingMode = false;
+// let incomingAttacks = []; // Attacks we need to block
+// let availableBlockers = []; // Our creatures that can block
+// let pendingBlocks = []; // Array of {blockerInstanceId, attackerInstanceId}
+// let selectedBlocker = null; // instanceId of creature we're assigning to block
 
 // Cookie helpers
 function setCookie(name, value, days = 1) {
@@ -147,16 +159,19 @@ ws.onmessage = (msg) => {
 
             case "MulliganPhase":
                 gameId = event.data.gameId;
-                // Get our hand from the players info
+                // Get our hand and leader from the players info
                 if (event.data.players[myUID]) {
                     myHand = event.data.players[myUID].hand || [];
+                    myLeader = event.data.players[myUID].leader || 0;
                     myDeckSize = event.data.players[myUID].deckSize || 0;
+                    myVaultSize = event.data.players[myUID].vaultSize || 0;
                     myDiscardSize = event.data.players[myUID].discardSize || 0;
                 }
-                // Find opponent UID
+                // Find opponent UID and their leader
                 for (const uid of Object.keys(event.data.players)) {
                     if (uid !== myUID) {
                         window.opponentUID = uid;
+                        opponentLeader = event.data.players[uid].leader || 0;
                         break;
                     }
                 }
@@ -164,6 +179,8 @@ ws.onmessage = (msg) => {
                 log("Mulligan phase - choose to keep or mulligan your hand");
                 showMulliganUI();
                 renderHand();
+                renderLeaders();
+                updateDeckDisplay();
                 break;
 
             case "PlayerKeptHand":
@@ -187,16 +204,19 @@ ws.onmessage = (msg) => {
             case "GameStarted":
                 gameId = event.data.gameId;
                 currentTurn = event.data.currentTurn;
-                // Get our hand from the players info (may have changed from mulligan)
+                // Get our hand and leader from the players info (may have changed from mulligan)
                 if (event.data.players[myUID]) {
                     myHand = event.data.players[myUID].hand || [];
+                    myLeader = event.data.players[myUID].leader || 0;
                     myDeckSize = event.data.players[myUID].deckSize || 0;
+                    myVaultSize = event.data.players[myUID].vaultSize || 0;
                     myDiscardSize = event.data.players[myUID].discardSize || 0;
                 }
-                // Find opponent UID
+                // Find opponent UID and their leader
                 for (const uid of Object.keys(event.data.players)) {
                     if (uid !== myUID) {
                         window.opponentUID = uid;
+                        opponentLeader = event.data.players[uid].leader || 0;
                         break;
                     }
                 }
@@ -206,6 +226,7 @@ ws.onmessage = (msg) => {
                 document.getElementById("chat-section").style.display = "block";
                 log("Game started!");
                 renderHand();
+                renderLeaders();
                 updateTurnStatus();
                 break;
 
@@ -231,12 +252,35 @@ ws.onmessage = (msg) => {
                 updateTurnStatus();
                 break;
 
+            case "DrawPhase":
+                // Player must choose to draw from main deck or vault
+                if (event.data.player === myUID) {
+                    inDrawPhase = true;
+                    myDeckSize = event.data.mainDeckSize;
+                    myVaultSize = event.data.vaultSize;
+                    showDrawPhaseUI();
+                    updateDeckDisplay();
+                }
+                break;
+
+            case "MustDraw":
+                setStatus(event.data.message);
+                break;
+
             case "CardDrawn":
                 // If we drew a card, add it to our hand
                 if (event.data.player === myUID) {
                     myHand.push(event.data.cardId);
-                    myDeckSize--;
+                    // Update deck counts based on source
+                    if (event.data.source === "vault") {
+                        myVaultSize = event.data.vaultSize;
+                    } else {
+                        myDeckSize = event.data.mainDeckSize;
+                    }
+                    inDrawPhase = false;
+                    hideDrawPhaseUI();
                     renderHand();
+                    updateDeckDisplay();
                 }
                 break;
 
@@ -248,6 +292,10 @@ ws.onmessage = (msg) => {
                     if (event.data.fieldCard) {
                         myField.push(event.data.fieldCard);
                     }
+                    if (event.data.manaPool) {
+                        myManaPool = event.data.manaPool;
+                        updateManaPoolDisplay();
+                    }
                     renderHand();
                     renderField();
                 } else {
@@ -255,6 +303,30 @@ ws.onmessage = (msg) => {
                     if (event.data.fieldCard) {
                         opponentField.push(event.data.fieldCard);
                     }
+                    renderOpponentField();
+                }
+                break;
+
+            case "LeaderPlayed":
+                // Leader moved to field
+                if (event.data.player === myUID) {
+                    myLeader = 0; // Clear leader since it's now on field
+                    if (event.data.fieldCard) {
+                        myField.push(event.data.fieldCard);
+                    }
+                    if (event.data.manaPool) {
+                        myManaPool = event.data.manaPool;
+                        updateManaPoolDisplay();
+                    }
+                    renderLeaders();
+                    renderField();
+                } else {
+                    // Opponent played their leader
+                    opponentLeader = 0;
+                    if (event.data.fieldCard) {
+                        opponentField.push(event.data.fieldCard);
+                    }
+                    renderLeaders();
                     renderOpponentField();
                 }
                 break;
@@ -284,6 +356,10 @@ ws.onmessage = (msg) => {
                     const idx = myHand.indexOf(event.data.cardId);
                     if (idx > -1) myHand.splice(idx, 1);
                     myDiscardSize++;
+                    if (event.data.manaPool) {
+                        myManaPool = event.data.manaPool;
+                        updateManaPoolDisplay();
+                    }
                     renderHand();
                 }
                 break;
@@ -438,10 +514,14 @@ ws.onmessage = (msg) => {
                 myLands = event.data.myLands || [];
                 myManaPool = event.data.myManaPool || { White: 0, Blue: 0, Black: 0, Red: 0, Green: 0, Colorless: 0 };
                 myDeckSize = event.data.myDeckSize || 0;
+                myVaultSize = event.data.myVaultSize || 0;
                 myDiscardSize = event.data.myDiscardSize || 0;
+                myLeader = event.data.myLeader || 0;
                 opponentHealth = event.data.opponentLife;
                 opponentField = event.data.opponentField || [];
                 opponentLands = event.data.opponentLands || [];
+                opponentLeader = event.data.opponentLeader || 0;
+                inDrawPhase = event.data.drawPhase || false;
 
                 // Update UI
                 hideReconnectButton();
@@ -452,11 +532,13 @@ ws.onmessage = (msg) => {
                     // Show mulligan UI - player hasn't decided yet
                     showMulliganUI();
                     renderHand();
+                    renderLeaders();
                     setStatus("Reconnected - Waiting for mulligan decision");
                 } else if (event.data.mulliganPhase && event.data.mulliganDecided) {
                     // Player decided but waiting for opponent
                     document.getElementById("game-controls").style.display = "block";
                     renderHand();
+                    renderLeaders();
                     setStatus("Reconnected - Waiting for opponent's mulligan decision");
                 } else {
                     // Game started - show full game UI
@@ -467,9 +549,15 @@ ws.onmessage = (msg) => {
                     renderLands();
                     renderOpponentField();
                     renderOpponentLands();
+                    renderLeaders();
                     updateHealthDisplay();
                     updateManaPoolDisplay();
+                    updateDeckDisplay();
                     updateTurnStatus();
+                    // Check if in draw phase
+                    if (inDrawPhase && currentTurn === myUID) {
+                        showDrawPhaseUI();
+                    }
                     setStatus("Reconnected to game " + gameId);
                 }
                 break;
@@ -483,35 +571,252 @@ ws.onmessage = (msg) => {
                 addChatMessage(event.data.player, event.data.message);
                 break;
 
-            case "BlockersNeeded":
-                // We need to declare blockers
-                if (event.data.defender === myUID) {
-                    blockingMode = true;
-                    incomingAttacks = event.data.attacks || [];
-                    availableBlockers = event.data.availableBlockers || [];
-                    pendingBlocks = [];
-                    selectedBlocker = null;
-                    console.log("BlockersNeeded received:");
-                    console.log("  myField:", myField.map(f => ({id: f.instanceId, cardId: f.cardId})));
-                    console.log("  availableBlockers:", availableBlockers);
-                    console.log("  incomingAttacks:", incomingAttacks);
-                    renderField();
-                    renderOpponentField();
-                    updateBlockingUI();
-                    addChatMessage("System", "You are being attacked! Assign blockers or confirm.");
+            // DISABLED - blocking removed
+            // case "BlockersNeeded":
+            //     // We need to declare blockers
+            //     if (event.data.defender === myUID) {
+            //         blockingMode = true;
+            //         incomingAttacks = event.data.attacks || [];
+            //         availableBlockers = event.data.availableBlockers || [];
+            //         pendingBlocks = [];
+            //         selectedBlocker = null;
+            //         console.log("BlockersNeeded received:");
+            //         console.log("  myField:", myField.map(f => ({id: f.instanceId, cardId: f.cardId})));
+            //         console.log("  availableBlockers:", availableBlockers);
+            //         console.log("  incomingAttacks:", incomingAttacks);
+            //         renderField();
+            //         renderOpponentField();
+            //         updateBlockingUI();
+            //         addChatMessage("System", "You are being attacked! Assign blockers or confirm.");
+            //     }
+            //     break;
+
+            // case "BlockersDeclared":
+            //     blockingMode = false;
+            //     incomingAttacks = [];
+            //     availableBlockers = [];
+            //     pendingBlocks = [];
+            //     selectedBlocker = null;
+            //     renderField();
+            //     renderOpponentField();
+            //     updateBlockingUI();
+            //     log("Blockers declared: " + JSON.stringify(event.data.blockers));
+            //     break;
+
+            // Script effect events
+            case "ScriptDraw":
+                if (event.data.player === myUID) {
+                    // Add drawn cards to hand
+                    for (const cardId of event.data.cards) {
+                        myHand.push(cardId);
+                    }
+                    myDeckSize = event.data.mainDeckSize;
+                    myVaultSize = event.data.vaultSize;
+                    renderHand();
+                    updateDeckDisplay();
+                    log(`Drew ${event.data.count} card(s) from ${event.data.source}`);
                 }
                 break;
 
-            case "BlockersDeclared":
-                blockingMode = false;
-                incomingAttacks = [];
-                availableBlockers = [];
-                pendingBlocks = [];
-                selectedBlocker = null;
+            case "ScriptDamage":
+                if (event.data.targetType === "player") {
+                    if (event.data.targetPlayer === myUID) {
+                        myHealth = event.data.newLife;
+                    } else {
+                        opponentHealth = event.data.newLife;
+                    }
+                    updateHealthDisplay();
+                    log(`${event.data.targetPlayer} took ${event.data.amount} damage (script)`);
+                } else if (event.data.targetType === "creature") {
+                    // Find and update creature health in UI
+                    const targetId = event.data.targetInstanceId;
+                    let found = myField.find(fc => fc.instanceId === targetId);
+                    if (found) {
+                        found.currentHealth = event.data.newHealth;
+                        renderField();
+                    } else {
+                        found = opponentField.find(fc => fc.instanceId === targetId);
+                        if (found) {
+                            found.currentHealth = event.data.newHealth;
+                            renderOpponentField();
+                        }
+                    }
+                    log(`Creature ${targetId} took ${event.data.amount} damage`);
+                }
+                break;
+
+            case "ScriptHeal":
+                if (event.data.targetType === "player") {
+                    if (event.data.targetPlayer === myUID) {
+                        myHealth = event.data.newLife;
+                    } else {
+                        opponentHealth = event.data.newLife;
+                    }
+                    updateHealthDisplay();
+                    log(`${event.data.targetPlayer} healed for ${event.data.amount}`);
+                } else if (event.data.targetType === "creature") {
+                    const targetId = event.data.targetInstanceId;
+                    let found = myField.find(fc => fc.instanceId === targetId);
+                    if (found) {
+                        found.currentHealth = event.data.newHealth;
+                        renderField();
+                    } else {
+                        found = opponentField.find(fc => fc.instanceId === targetId);
+                        if (found) {
+                            found.currentHealth = event.data.newHealth;
+                            renderOpponentField();
+                        }
+                    }
+                    log(`Creature ${targetId} healed for ${event.data.amount}`);
+                }
+                break;
+
+            case "ScriptBuff":
+                {
+                    const targetId = event.data.targetInstanceId;
+                    let found = myField.find(fc => fc.instanceId === targetId);
+                    if (found) {
+                        found.damageModifier = (found.damageModifier || 0) + event.data.attackMod;
+                        found.healthModifier = (found.healthModifier || 0) + event.data.healthMod;
+                        found.currentHealth = event.data.newHealth;
+                        renderField();
+                    } else {
+                        found = opponentField.find(fc => fc.instanceId === targetId);
+                        if (found) {
+                            found.damageModifier = (found.damageModifier || 0) + event.data.attackMod;
+                            found.healthModifier = (found.healthModifier || 0) + event.data.healthMod;
+                            found.currentHealth = event.data.newHealth;
+                            renderOpponentField();
+                        }
+                    }
+                    log(`Creature ${targetId} buffed +${event.data.attackMod}/+${event.data.healthMod}`);
+                }
+                break;
+
+            case "ScriptManaAdded":
+                if (event.data.player === myUID) {
+                    myManaPool = event.data.manaPool;
+                    updateManaPoolDisplay();
+                    log("Mana added via script");
+                }
+                break;
+
+            case "ScriptDiscard":
+                if (event.data.player === myUID) {
+                    // Remove discarded cards from hand
+                    for (const cardId of event.data.discarded) {
+                        const idx = myHand.indexOf(cardId);
+                        if (idx !== -1) {
+                            myHand.splice(idx, 1);
+                        }
+                    }
+                    myDiscardSize += event.data.discarded.length;
+                    renderHand();
+                    updateDeckDisplay();
+                    log(`Discarded ${event.data.discarded.length} card(s)`);
+                }
+                break;
+
+            case "ScriptDestroy":
+                // Creature will be removed by CreatureDied event
+                log(`Creature ${event.data.targetInstanceId} destroyed by script`);
+                break;
+
+            case "ScriptError":
+                log("Script error: " + event.data.error);
+                break;
+
+            case "ScriptTap":
+                // Creature was tapped by a script
+                {
+                    const fc = findFieldCard(myField, event.data.targetInstanceId) ||
+                               findFieldCard(opponentField, event.data.targetInstanceId);
+                    if (fc) {
+                        if (!fc.status) fc.status = {};
+                        fc.status.Tapped = 1;
+                        renderField();
+                        renderOpponentField();
+                    }
+                }
+                break;
+
+            case "ScriptBounce":
+                // Creature was bounced to hand
+                if (event.data.owner === myUID) {
+                    // Our creature bounced - add to hand, remove from field
+                    myHand.push(event.data.cardId);
+                    myField = myField.filter(fc => fc.instanceId !== event.data.targetInstanceId);
+                    renderHand();
+                    renderField();
+                } else {
+                    // Opponent's creature bounced
+                    opponentField = opponentField.filter(fc => fc.instanceId !== event.data.targetInstanceId);
+                    renderOpponentField();
+                }
+                break;
+
+            case "ResponseWindow":
+                // Combat response window opened
+                inResponseWindow = true;
+                attacksInProgress = event.data.attacks || [];
+                hasPriority = event.data.priorityPlayer === myUID;
+
+                // Get our instants
+                if (event.data.defender === myUID) {
+                    myInstants = event.data.defenderInstants || [];
+                } else {
+                    myInstants = event.data.attackerInstants || [];
+                }
+
+                showResponseUI();
                 renderField();
                 renderOpponentField();
-                updateBlockingUI();
-                log("Blockers declared: " + JSON.stringify(event.data.blockers));
+                log("Response window opened - " + (hasPriority ? "You have priority" : "Waiting for opponent"));
+                break;
+
+            case "PriorityChanged":
+                hasPriority = event.data.priorityPlayer === myUID;
+                updateResponseUI();
+                log(hasPriority ? "You have priority" : "Opponent has priority");
+                break;
+
+            case "PlayerPassed":
+                log((event.data.player === myUID ? "You" : "Opponent") + " passed priority");
+                break;
+
+            case "InstantPlayed":
+                // An instant was played
+                if (event.data.player === myUID) {
+                    // Remove from our hand
+                    const idx = myHand.indexOf(event.data.cardId);
+                    if (idx > -1) myHand.splice(idx, 1);
+                    myManaPool = event.data.manaPool;
+                    renderHand();
+                    updateManaPoolDisplay();
+                    // Refresh our instants list
+                    myInstants = myInstants.filter(i => i.cardId !== event.data.cardId);
+                }
+                const instantCard = cardDB[event.data.cardId];
+                log((event.data.player === myUID ? "You" : "Opponent") +
+                    " played " + (instantCard ? instantCard.Name : "instant"));
+                updateResponseUI();
+                break;
+
+            case "CombatResolving":
+                log("Combat resolving...");
+                break;
+
+            case "CombatEnded":
+                // Combat ended
+                inResponseWindow = false;
+                hasPriority = false;
+                myInstants = [];
+                selectedInstant = null;
+                attacksInProgress = [];
+                hideResponseUI();
+                renderField();
+                renderOpponentField();
+                log("Combat ended");
                 break;
 
             case "Error":
@@ -643,11 +948,14 @@ function renderHand() {
                 burnBtn = `<button class="burn-btn" onclick="event.stopPropagation(); burnCard(${cardId});">Burn</button>`;
             }
             const abilitiesStr = formatAbilities(card.Abilities);
+            const cardText = card.CardText ? `<div class="card-text">${card.CardText}</div>` : '';
+            const statsStr = card.CardType === "Creature" ? `<div class="card-stats">${card.Attack}/${card.Defense}</div>` : '';
             cardEl.innerHTML = `
                 <div class="card-name">${card.Name}</div>
                 <div class="card-cost">${costStr}</div>
-                <div class="card-stats">${card.Attack}/${card.Defense}</div>
+                ${statsStr}
                 <div class="card-type">${card.CardType}</div>
+                ${cardText}
                 ${abilitiesStr}
                 ${burnBtn}
             `;
@@ -784,115 +1092,115 @@ function updateCombatUI() {
     updateOpponentHealthTargeting();
 }
 
-// Blocking functions
-function selectBlocker(instanceId) {
-    if (!blockingMode) return;
-
-    // Check if this creature can block
-    const canBlock = availableBlockers.some(b => b.instanceId === instanceId);
-    if (!canBlock) {
-        alert("This creature cannot block!");
-        return;
-    }
-
-    // Check if already assigned
-    const alreadyBlocking = pendingBlocks.find(b => b.blockerInstanceId === instanceId);
-    if (alreadyBlocking) {
-        // Remove from pending
-        pendingBlocks = pendingBlocks.filter(b => b.blockerInstanceId !== instanceId);
-        selectedBlocker = null;
-    } else {
-        selectedBlocker = instanceId;
-    }
-    renderField();
-    renderOpponentField();
-    updateBlockingUI();
-}
-
-function canBlockAttacker(blockerInstanceId, attackerInstanceId) {
-    // Find blocker abilities
-    const blocker = availableBlockers.find(b => b.instanceId === blockerInstanceId);
-    if (!blocker) return false;
-
-    // Find attacker abilities
-    const attack = incomingAttacks.find(a => a.attackerInstanceId === attackerInstanceId);
-    if (!attack) return false;
-
-    const blockerAbilities = blocker.abilities || [];
-    const attackerAbilities = attack.attackerAbilities || [];
-
-    // Flying creatures can only be blocked by Flying or Reach
-    if (attackerAbilities.includes("Flying")) {
-        if (!blockerAbilities.includes("Flying") && !blockerAbilities.includes("Reach")) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-function selectAttackerToBlock(attackerInstanceId) {
-    if (!blockingMode || selectedBlocker === null) return;
-
-    // Find the attack
-    const attack = incomingAttacks.find(a => a.attackerInstanceId === attackerInstanceId);
-    if (!attack) return;
-
-    // Check if this blocker can block this attacker (Flying/Reach check)
-    if (!canBlockAttacker(selectedBlocker, attackerInstanceId)) {
-        alert("This creature cannot block a Flying creature! Need Flying or Reach.");
-        return;
-    }
-
-    // Can block attacks targeting player OR your creatures
-    pendingBlocks.push({
-        blockerInstanceId: selectedBlocker,
-        attackerInstanceId: attackerInstanceId
-    });
-    selectedBlocker = null;
-    renderField();
-    renderOpponentField();
-    updateBlockingUI();
-}
-
-function confirmBlockers() {
-    ws.send(JSON.stringify({
-        playerUid: myUID,
-        type: "declare_blockers",
-        blockers: pendingBlocks
-    }));
-}
-
-function skipBlocking() {
-    // Confirm with no blockers
-    ws.send(JSON.stringify({
-        playerUid: myUID,
-        type: "declare_blockers",
-        blockers: []
-    }));
-}
-
-function updateBlockingUI() {
-    const blockingStatus = document.getElementById("blocking-status");
-    const confirmBlockBtn = document.getElementById("confirm-block-btn");
-    const skipBlockBtn = document.getElementById("skip-block-btn");
-
-    if (blockingStatus) {
-        if (!blockingMode) {
-            blockingStatus.textContent = "";
-            blockingStatus.style.display = "none";
-        } else if (selectedBlocker) {
-            blockingStatus.textContent = "Click an attacking creature to block it";
-            blockingStatus.style.display = "block";
-        } else {
-            blockingStatus.textContent = `Blocking Mode: ${pendingBlocks.length} blockers assigned. Click your creatures to select blockers.`;
-            blockingStatus.style.display = "block";
-        }
-    }
-
-    if (confirmBlockBtn) confirmBlockBtn.style.display = blockingMode ? "inline-block" : "none";
-    if (skipBlockBtn) skipBlockBtn.style.display = blockingMode ? "inline-block" : "none";
-}
+// DISABLED - Blocking functions (blocking removed)
+// function selectBlocker(instanceId) {
+//     if (!blockingMode) return;
+//
+//     // Check if this creature can block
+//     const canBlock = availableBlockers.some(b => b.instanceId === instanceId);
+//     if (!canBlock) {
+//         alert("This creature cannot block!");
+//         return;
+//     }
+//
+//     // Check if already assigned
+//     const alreadyBlocking = pendingBlocks.find(b => b.blockerInstanceId === instanceId);
+//     if (alreadyBlocking) {
+//         // Remove from pending
+//         pendingBlocks = pendingBlocks.filter(b => b.blockerInstanceId !== instanceId);
+//         selectedBlocker = null;
+//     } else {
+//         selectedBlocker = instanceId;
+//     }
+//     renderField();
+//     renderOpponentField();
+//     updateBlockingUI();
+// }
+//
+// function canBlockAttacker(blockerInstanceId, attackerInstanceId) {
+//     // Find blocker abilities
+//     const blocker = availableBlockers.find(b => b.instanceId === blockerInstanceId);
+//     if (!blocker) return false;
+//
+//     // Find attacker abilities
+//     const attack = incomingAttacks.find(a => a.attackerInstanceId === attackerInstanceId);
+//     if (!attack) return false;
+//
+//     const blockerAbilities = blocker.abilities || [];
+//     const attackerAbilities = attack.attackerAbilities || [];
+//
+//     // Flying creatures can only be blocked by Flying or Reach
+//     if (attackerAbilities.includes("Flying")) {
+//         if (!blockerAbilities.includes("Flying") && !blockerAbilities.includes("Reach")) {
+//             return false;
+//         }
+//     }
+//
+//     return true;
+// }
+//
+// function selectAttackerToBlock(attackerInstanceId) {
+//     if (!blockingMode || selectedBlocker === null) return;
+//
+//     // Find the attack
+//     const attack = incomingAttacks.find(a => a.attackerInstanceId === attackerInstanceId);
+//     if (!attack) return;
+//
+//     // Check if this blocker can block this attacker (Flying/Reach check)
+//     if (!canBlockAttacker(selectedBlocker, attackerInstanceId)) {
+//         alert("This creature cannot block a Flying creature! Need Flying or Reach.");
+//         return;
+//     }
+//
+//     // Can block attacks targeting player OR your creatures
+//     pendingBlocks.push({
+//         blockerInstanceId: selectedBlocker,
+//         attackerInstanceId: attackerInstanceId
+//     });
+//     selectedBlocker = null;
+//     renderField();
+//     renderOpponentField();
+//     updateBlockingUI();
+// }
+//
+// function confirmBlockers() {
+//     ws.send(JSON.stringify({
+//         playerUid: myUID,
+//         type: "declare_blockers",
+//         blockers: pendingBlocks
+//     }));
+// }
+//
+// function skipBlocking() {
+//     // Confirm with no blockers
+//     ws.send(JSON.stringify({
+//         playerUid: myUID,
+//         type: "declare_blockers",
+//         blockers: []
+//     }));
+// }
+//
+// function updateBlockingUI() {
+//     const blockingStatus = document.getElementById("blocking-status");
+//     const confirmBlockBtn = document.getElementById("confirm-block-btn");
+//     const skipBlockBtn = document.getElementById("skip-block-btn");
+//
+//     if (blockingStatus) {
+//         if (!blockingMode) {
+//             blockingStatus.textContent = "";
+//             blockingStatus.style.display = "none";
+//         } else if (selectedBlocker) {
+//             blockingStatus.textContent = "Click an attacking creature to block it";
+//             blockingStatus.style.display = "block";
+//         } else {
+//             blockingStatus.textContent = `Blocking Mode: ${pendingBlocks.length} blockers assigned. Click your creatures to select blockers.`;
+//             blockingStatus.style.display = "block";
+//         }
+//     }
+//
+//     if (confirmBlockBtn) confirmBlockBtn.style.display = blockingMode ? "inline-block" : "none";
+//     if (skipBlockBtn) skipBlockBtn.style.display = blockingMode ? "inline-block" : "none";
+// }
 
 function formatCost(cost) {
     if (!cost) return "Free";
@@ -930,34 +1238,14 @@ function renderField() {
         if (isAttacking) classes += " attacking";
         cardEl.className = classes;
 
-        // Blocking click handler (check first, takes priority)
-        if (blockingMode) {
-            const canBlock = availableBlockers.some(b => b.instanceId === fc.instanceId);
-            const isSelectedBlocker = selectedBlocker === fc.instanceId;
-            const isBlocking = pendingBlocks.some(b => b.blockerInstanceId === fc.instanceId);
-
-            console.log("Blocking mode - creature:", fc.instanceId, "canBlock:", canBlock, "availableBlockers:", availableBlockers);
-
-            if (canBlock) {
-                cardEl.classList.add("can-block");
-                cardEl.style.cursor = "pointer";
-            }
-            if (isSelectedBlocker) {
-                cardEl.classList.add("selected-blocker");
-            }
-            if (isBlocking) {
-                cardEl.classList.add("blocking");
-            }
-
-            // Attach click handler for any creature that can block
-            if (canBlock || isBlocking) {
-                const instanceId = fc.instanceId;
-                cardEl.addEventListener("click", function() {
-                    selectBlocker(instanceId);
-                });
-            }
+        // Response window - click to target own creatures (for buff instants)
+        if (inResponseWindow && selectedInstant !== null && hasPriority) {
+            cardEl.classList.add("targetable");
+            cardEl.style.cursor = "crosshair";
+            const instanceId = fc.instanceId;
+            cardEl.onclick = () => playInstant(instanceId);
         }
-        // Combat click handler (only if not in blocking mode)
+        // Combat click handler
         else if (combatMode && !isSummoned && !isTapped) {
             cardEl.onclick = () => selectAttacker(fc.instanceId);
             cardEl.style.cursor = "pointer";
@@ -981,7 +1269,9 @@ function renderField() {
                 statusText = '<div style="color:#ff9800;font-size:10px;">Ready</div>';
             }
             const abilitiesStr = formatAbilities(card.Abilities);
+            const tooltip = card.CardText ? `<div class="card-tooltip">${card.CardText}</div>` : '';
             cardEl.innerHTML = `
+                ${tooltip}
                 <div class="card-name">${card.Name}</div>
                 <div class="card-attack">ATK: ${effectiveAttack}</div>
                 <div class="card-health">HP: ${effectiveHealth}/${maxHealth}</div>
@@ -1095,34 +1385,40 @@ function renderOpponentField() {
         if (isTapped) classes += " tapped";
         if (isTargeted) classes += " targeted";
         if (combatMode && selectedAttacker !== null) classes += " targetable";
+        if (inResponseWindow && selectedInstant !== null && hasPriority) classes += " targetable";
         cardEl.className = classes;
 
+        // Response window - click to target opponent creatures
+        if (inResponseWindow && selectedInstant !== null && hasPriority) {
+            cardEl.onclick = () => playInstant(fc.instanceId);
+            cardEl.style.cursor = "crosshair";
+        }
         // Combat target click handler
-        if (combatMode && selectedAttacker !== null) {
+        else if (combatMode && selectedAttacker !== null) {
             cardEl.onclick = () => selectTarget("creature", fc.instanceId, "");
             cardEl.style.cursor = "crosshair";
         }
 
-        // Blocking mode - show attacking creatures (can block attacks targeting player OR your creatures)
-        if (blockingMode) {
-            const isAttacking = incomingAttacks.some(a => a.attackerInstanceId === fc.instanceId);
-            const isBeingBlocked = pendingBlocks.some(b => b.attackerInstanceId === fc.instanceId);
-
-            if (isAttacking) {
-                cardEl.classList.add("attacking");
-                if (selectedBlocker !== null && !isBeingBlocked) {
-                    cardEl.classList.add("blockable");
-                    const instanceId = fc.instanceId;
-                    cardEl.addEventListener("click", function() {
-                        selectAttackerToBlock(instanceId);
-                    });
-                    cardEl.style.cursor = "crosshair";
-                }
-            }
-            if (isBeingBlocked) {
-                cardEl.classList.add("being-blocked");
-            }
-        }
+        // DISABLED - Blocking mode (blocking removed)
+        // if (blockingMode) {
+        //     const isAttacking = incomingAttacks.some(a => a.attackerInstanceId === fc.instanceId);
+        //     const isBeingBlocked = pendingBlocks.some(b => b.attackerInstanceId === fc.instanceId);
+        //
+        //     if (isAttacking) {
+        //         cardEl.classList.add("attacking");
+        //         if (selectedBlocker !== null && !isBeingBlocked) {
+        //             cardEl.classList.add("blockable");
+        //             const instanceId = fc.instanceId;
+        //             cardEl.addEventListener("click", function() {
+        //                 selectAttackerToBlock(instanceId);
+        //             });
+        //             cardEl.style.cursor = "crosshair";
+        //         }
+        //     }
+        //     if (isBeingBlocked) {
+        //         cardEl.classList.add("being-blocked");
+        //     }
+        // }
 
         const effectiveAttack = (card?.Attack || 0) + (fc.damageModifier || 0);
         const effectiveHealth = fc.currentHealth;
@@ -1131,7 +1427,9 @@ function renderOpponentField() {
         if (card) {
             let targetText = isTargeted ? '<div style="color:#ff5722;font-size:10px;">Targeted</div>' : '';
             const abilitiesStr = formatAbilities(card.Abilities);
+            const tooltip = card.CardText ? `<div class="card-tooltip">${card.CardText}</div>` : '';
             cardEl.innerHTML = `
+                ${tooltip}
                 <div class="card-name">${card.Name}</div>
                 <div class="card-attack">ATK: ${effectiveAttack}</div>
                 <div class="card-health">HP: ${effectiveHealth}/${maxHealth}</div>
@@ -1167,6 +1465,72 @@ function renderOpponentLands() {
     }
 
     document.getElementById("opponent-lands-count").textContent = opponentLands.length;
+}
+
+function renderLeaders() {
+    const myLeaderEl = document.getElementById("my-leader");
+    const opponentLeaderEl = document.getElementById("opponent-leader");
+
+    if (myLeaderEl && myLeader) {
+        const card = cardDB[myLeader];
+        if (card) {
+            const costStr = formatCost(card.Cost);
+            const abilitiesStr = formatAbilities(card.Abilities);
+            const cardText = card.CardText ? `<div class="card-text">${card.CardText}</div>` : '';
+            myLeaderEl.innerHTML = `
+                <div class="leader-label">Leader</div>
+                <div class="card-name">${card.Name}</div>
+                <div class="card-cost">${costStr}</div>
+                <div class="card-stats">${card.Attack}/${card.Defense}</div>
+                ${cardText}
+                ${abilitiesStr}
+            `;
+            myLeaderEl.style.cursor = "pointer";
+            myLeaderEl.onclick = () => playLeader();
+        } else {
+            myLeaderEl.innerHTML = `<div class="leader-label">Leader</div><div class="card-name">Card #${myLeader}</div>`;
+        }
+    } else if (myLeaderEl) {
+        myLeaderEl.innerHTML = '<div class="leader-label">No Leader</div>';
+        myLeaderEl.style.cursor = "default";
+        myLeaderEl.onclick = null;
+    }
+
+    if (opponentLeaderEl && opponentLeader) {
+        const card = cardDB[opponentLeader];
+        if (card) {
+            const costStr = formatCost(card.Cost);
+            const abilitiesStr = formatAbilities(card.Abilities);
+            const cardText = card.CardText ? `<div class="card-text">${card.CardText}</div>` : '';
+            opponentLeaderEl.innerHTML = `
+                <div class="leader-label">Leader</div>
+                <div class="card-name">${card.Name}</div>
+                <div class="card-cost">${costStr}</div>
+                <div class="card-stats">${card.Attack}/${card.Defense}</div>
+                ${cardText}
+                ${abilitiesStr}
+            `;
+        } else {
+            opponentLeaderEl.innerHTML = `<div class="leader-label">Leader</div><div class="card-name">Card #${opponentLeader}</div>`;
+        }
+    } else if (opponentLeaderEl) {
+        opponentLeaderEl.innerHTML = '<div class="leader-label">No Leader</div>';
+    }
+}
+
+function playLeader() {
+    if (currentTurn !== myUID) {
+        alert("Not your turn!");
+        return;
+    }
+    if (!myLeader) {
+        alert("No leader to play!");
+        return;
+    }
+    ws.send(JSON.stringify({
+        playerUid: myUID,
+        type: "play_leader"
+    }));
 }
 
 function endTurn() {
@@ -1269,13 +1633,18 @@ function leaveGame() {
     myField = [];
     myLands = [];
     myDeckSize = 0;
+    myVaultSize = 0;
     myDiscardSize = 0;
+    inDrawPhase = false;
     opponentField = [];
     opponentLands = [];
     myManaPool = { White: 0, Blue: 0, Black: 0, Red: 0, Green: 0, Colorless: 0 };
+    myLeader = 0;
+    opponentLeader = 0;
 
     // Reset UI
     hideMulliganUI();
+    hideDrawPhaseUI();
     document.getElementById("game-controls").style.display = "none";
     document.getElementById("chat-section").style.display = "none";
     document.getElementById("chat-messages").innerHTML = "";
@@ -1289,12 +1658,15 @@ function leaveGame() {
     document.getElementById("field-count").textContent = "0";
     document.getElementById("lands-count").textContent = "0";
     document.getElementById("deck-count").textContent = "0";
+    document.getElementById("vault-count").textContent = "0";
     document.getElementById("discard-count").textContent = "0";
     document.getElementById("mana-display").textContent = "0";
     document.getElementById("opponent-field").innerHTML = "";
     document.getElementById("opponent-lands").innerHTML = "";
     document.getElementById("opponent-field-count").textContent = "0";
     document.getElementById("opponent-lands-count").textContent = "0";
+    document.getElementById("my-leader").innerHTML = '<div class="leader-label">No Leader</div>';
+    document.getElementById("opponent-leader").innerHTML = '<div class="leader-label">No Leader</div>';
 
     // Re-enable buttons for next game
     const buttons = document.querySelectorAll("#game-controls .section-content button:not(.hide-btn)");
@@ -1434,5 +1806,145 @@ function takeMulligan() {
     ws.send(JSON.stringify({
         playerUid: myUID,
         type: "mulligan"
+    }));
+}
+
+// Draw phase functions
+function showDrawPhaseUI() {
+    const drawDiv = document.getElementById("draw-phase-controls");
+    if (drawDiv) {
+        drawDiv.style.display = "block";
+        // Update button labels with deck sizes
+        const mainBtn = document.getElementById("draw-main-btn");
+        const vaultBtn = document.getElementById("draw-vault-btn");
+        if (mainBtn) mainBtn.textContent = `Draw from Deck (${myDeckSize})`;
+        if (vaultBtn) vaultBtn.textContent = `Draw from Vault (${myVaultSize})`;
+    }
+    setStatus("Draw Phase - Choose a card source");
+}
+
+function hideDrawPhaseUI() {
+    const drawDiv = document.getElementById("draw-phase-controls");
+    if (drawDiv) {
+        drawDiv.style.display = "none";
+    }
+}
+
+function drawFromMain() {
+    ws.send(JSON.stringify({
+        playerUid: myUID,
+        type: "draw_card",
+        source: "main"
+    }));
+}
+
+function drawFromVault() {
+    ws.send(JSON.stringify({
+        playerUid: myUID,
+        type: "draw_card",
+        source: "vault"
+    }));
+}
+
+function updateDeckDisplay() {
+    document.getElementById("deck-count").textContent = myDeckSize;
+    const vaultEl = document.getElementById("vault-count");
+    if (vaultEl) vaultEl.textContent = myVaultSize;
+}
+
+// Response window functions
+function showResponseUI() {
+    const responseDiv = document.getElementById("response-controls");
+    if (responseDiv) {
+        responseDiv.style.display = "block";
+    }
+    updateResponseUI();
+}
+
+function hideResponseUI() {
+    const responseDiv = document.getElementById("response-controls");
+    if (responseDiv) {
+        responseDiv.style.display = "none";
+    }
+    selectedInstant = null;
+}
+
+function updateResponseUI() {
+    const responseStatus = document.getElementById("response-status");
+    const responseInstants = document.getElementById("response-instants");
+    const passBtn = document.getElementById("pass-priority-btn");
+
+    if (responseStatus) {
+        if (!inResponseWindow) {
+            responseStatus.textContent = "";
+        } else if (selectedInstant) {
+            responseStatus.textContent = "Select a target creature for your instant";
+        } else if (hasPriority) {
+            responseStatus.textContent = "You have priority - Play an instant or pass";
+        } else {
+            responseStatus.textContent = "Waiting for opponent...";
+        }
+    }
+
+    if (passBtn) {
+        passBtn.disabled = !hasPriority || selectedInstant !== null;
+    }
+
+    // Render available instants
+    if (responseInstants) {
+        responseInstants.innerHTML = "";
+        if (hasPriority) {
+            for (const instant of myInstants) {
+                const card = cardDB[instant.cardId];
+                const btn = document.createElement("button");
+                btn.className = "instant-btn" + (instant.canAfford ? "" : " disabled");
+                btn.disabled = !instant.canAfford;
+                btn.onclick = () => selectInstant(instant.cardId);
+                if (selectedInstant === instant.cardId) {
+                    btn.classList.add("selected");
+                }
+                const costStr = formatCost(card ? card.Cost : instant.cost);
+                btn.innerHTML = `<strong>${card ? card.Name : "Instant"}</strong><br>${costStr}`;
+                responseInstants.appendChild(btn);
+            }
+        }
+    }
+}
+
+function selectInstant(cardId) {
+    if (selectedInstant === cardId) {
+        // Deselect
+        selectedInstant = null;
+    } else {
+        selectedInstant = cardId;
+    }
+    updateResponseUI();
+    renderField();
+    renderOpponentField();
+}
+
+function playInstant(targetInstanceId) {
+    if (!selectedInstant) {
+        alert("Select an instant first!");
+        return;
+    }
+    ws.send(JSON.stringify({
+        playerUid: myUID,
+        type: "play_instant",
+        cardId: selectedInstant,
+        instanceId: targetInstanceId
+    }));
+    selectedInstant = null;
+    updateResponseUI();
+}
+
+function passPriority() {
+    if (!hasPriority) {
+        alert("Not your priority!");
+        return;
+    }
+    ws.send(JSON.stringify({
+        playerUid: myUID,
+        type: "pass_priority"
     }));
 }
