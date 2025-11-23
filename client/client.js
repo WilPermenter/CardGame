@@ -1,50 +1,58 @@
+// ============================================================================
+// TCG CLIENT - Main JavaScript File
+// ============================================================================
+
+// ============================================================================
+// CONNECTION & STATE
+// ============================================================================
+
 // Auto-detect local vs production server
 const isLocal = window.location.hostname === "localhost"
     || window.location.hostname === "127.0.0.1"
     || window.location.protocol === "file:";
 const wsUrl = isLocal ? "ws://localhost:8080/ws" : "ws://134.199.204.89/ws";
 let ws = new WebSocket(wsUrl);
+
+// Player state
 let myUID = "";
 let gameId = "";
 let currentTurn = "";
 let myHealth = 30;
 let opponentHealth = 30;
 let selectedDeckId = 0;
+
+// Hand and field state
 let myHand = [];
-let myField = []; // Creature FieldCard objects
-let myLands = []; // Land FieldCard objects
+let myField = [];          // Creature FieldCard objects
+let myLands = [];          // Land FieldCard objects
 let myDeckSize = 0;
 let myVaultSize = 0;
 let myDiscardSize = 0;
-let opponentField = []; // Opponent's creatures
-let opponentLands = []; // Opponent's lands
+let opponentField = [];    // Opponent's creatures
+let opponentLands = [];    // Opponent's lands
 let myManaPool = { White: 0, Blue: 0, Black: 0, Red: 0, Green: 0, Colorless: 0 };
-let cardDB = {}; // Local card database
-let inDrawPhase = false; // True when player must choose to draw
-let myLeader = 0; // Leader card ID
-let opponentLeader = 0; // Opponent's leader card ID
+let cardDB = {};           // Local card database
+let inDrawPhase = false;
+let myLeader = 0;
+let opponentLeader = 0;
 
 // Combat state
 let combatMode = false;
-let pendingAttacks = []; // Array of {attackerInstanceId, targetType, targetInstanceId, targetPlayerUid}
-let selectedAttacker = null; // instanceId of creature being assigned a target
+let pendingAttacks = [];
+let selectedAttacker = null;
 
-// Response window state (for playing instants during combat)
+// Response window state (for instants during combat)
 let responseMode = false;
 let inResponseWindow = false;
 let hasPriority = false;
-let myInstants = []; // Instants I can play
-let selectedInstant = null; // Card ID of instant being played
-let attacksInProgress = []; // Attacks we're responding to
+let myInstants = [];
+let selectedInstant = null;
+let attacksInProgress = [];
 
-// Blocking state (DISABLED - blocking removed)
-// let blockingMode = false;
-// let incomingAttacks = []; // Attacks we need to block
-// let availableBlockers = []; // Our creatures that can block
-// let pendingBlocks = []; // Array of {blockerInstanceId, attackerInstanceId}
-// let selectedBlocker = null; // instanceId of creature we're assigning to block
+// ============================================================================
+// COOKIE & STORAGE HELPERS
+// ============================================================================
 
-// Cookie helpers
 function setCookie(name, value, days = 1) {
     const expires = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toUTCString();
     document.cookie = `${name}=${encodeURIComponent(value)}; expires=${expires}; path=/`;
@@ -1092,115 +1100,9 @@ function updateCombatUI() {
     updateOpponentHealthTargeting();
 }
 
-// DISABLED - Blocking functions (blocking removed)
-// function selectBlocker(instanceId) {
-//     if (!blockingMode) return;
-//
-//     // Check if this creature can block
-//     const canBlock = availableBlockers.some(b => b.instanceId === instanceId);
-//     if (!canBlock) {
-//         alert("This creature cannot block!");
-//         return;
-//     }
-//
-//     // Check if already assigned
-//     const alreadyBlocking = pendingBlocks.find(b => b.blockerInstanceId === instanceId);
-//     if (alreadyBlocking) {
-//         // Remove from pending
-//         pendingBlocks = pendingBlocks.filter(b => b.blockerInstanceId !== instanceId);
-//         selectedBlocker = null;
-//     } else {
-//         selectedBlocker = instanceId;
-//     }
-//     renderField();
-//     renderOpponentField();
-//     updateBlockingUI();
-// }
-//
-// function canBlockAttacker(blockerInstanceId, attackerInstanceId) {
-//     // Find blocker abilities
-//     const blocker = availableBlockers.find(b => b.instanceId === blockerInstanceId);
-//     if (!blocker) return false;
-//
-//     // Find attacker abilities
-//     const attack = incomingAttacks.find(a => a.attackerInstanceId === attackerInstanceId);
-//     if (!attack) return false;
-//
-//     const blockerAbilities = blocker.abilities || [];
-//     const attackerAbilities = attack.attackerAbilities || [];
-//
-//     // Flying creatures can only be blocked by Flying or Reach
-//     if (attackerAbilities.includes("Flying")) {
-//         if (!blockerAbilities.includes("Flying") && !blockerAbilities.includes("Reach")) {
-//             return false;
-//         }
-//     }
-//
-//     return true;
-// }
-//
-// function selectAttackerToBlock(attackerInstanceId) {
-//     if (!blockingMode || selectedBlocker === null) return;
-//
-//     // Find the attack
-//     const attack = incomingAttacks.find(a => a.attackerInstanceId === attackerInstanceId);
-//     if (!attack) return;
-//
-//     // Check if this blocker can block this attacker (Flying/Reach check)
-//     if (!canBlockAttacker(selectedBlocker, attackerInstanceId)) {
-//         alert("This creature cannot block a Flying creature! Need Flying or Reach.");
-//         return;
-//     }
-//
-//     // Can block attacks targeting player OR your creatures
-//     pendingBlocks.push({
-//         blockerInstanceId: selectedBlocker,
-//         attackerInstanceId: attackerInstanceId
-//     });
-//     selectedBlocker = null;
-//     renderField();
-//     renderOpponentField();
-//     updateBlockingUI();
-// }
-//
-// function confirmBlockers() {
-//     ws.send(JSON.stringify({
-//         playerUid: myUID,
-//         type: "declare_blockers",
-//         blockers: pendingBlocks
-//     }));
-// }
-//
-// function skipBlocking() {
-//     // Confirm with no blockers
-//     ws.send(JSON.stringify({
-//         playerUid: myUID,
-//         type: "declare_blockers",
-//         blockers: []
-//     }));
-// }
-//
-// function updateBlockingUI() {
-//     const blockingStatus = document.getElementById("blocking-status");
-//     const confirmBlockBtn = document.getElementById("confirm-block-btn");
-//     const skipBlockBtn = document.getElementById("skip-block-btn");
-//
-//     if (blockingStatus) {
-//         if (!blockingMode) {
-//             blockingStatus.textContent = "";
-//             blockingStatus.style.display = "none";
-//         } else if (selectedBlocker) {
-//             blockingStatus.textContent = "Click an attacking creature to block it";
-//             blockingStatus.style.display = "block";
-//         } else {
-//             blockingStatus.textContent = `Blocking Mode: ${pendingBlocks.length} blockers assigned. Click your creatures to select blockers.`;
-//             blockingStatus.style.display = "block";
-//         }
-//     }
-//
-//     if (confirmBlockBtn) confirmBlockBtn.style.display = blockingMode ? "inline-block" : "none";
-//     if (skipBlockBtn) skipBlockBtn.style.display = blockingMode ? "inline-block" : "none";
-// }
+// ============================================================================
+// FORMATTING FUNCTIONS
+// ============================================================================
 
 function formatCost(cost) {
     if (!cost) return "Free";

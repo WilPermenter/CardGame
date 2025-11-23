@@ -1,3 +1,4 @@
+// scripts.go - Card script system for custom card abilities
 package game
 
 import (
@@ -5,6 +6,10 @@ import (
 	"strconv"
 	"strings"
 )
+
+// ============================================================================
+// SCRIPT CONTEXT & EXECUTION
+// ============================================================================
 
 // ScriptContext provides all the information needed to execute a script
 type ScriptContext struct {
@@ -51,6 +56,10 @@ func ExecuteScript(script string, ctx *ScriptContext) []Event {
 
 	return events
 }
+
+// ============================================================================
+// PARSING HELPERS
+// ============================================================================
 
 // splitCommands splits a script into individual commands
 func splitCommands(script string) []string {
@@ -114,6 +123,10 @@ func parseArgs(argsStr string) []string {
 	return args
 }
 
+// ============================================================================
+// FUNCTION DISPATCHER & RESOLUTION
+// ============================================================================
+
 // executeFunction executes a script function and returns events
 func executeFunction(funcName string, args []string, ctx *ScriptContext) []Event {
 	switch strings.ToLower(funcName) {
@@ -176,6 +189,10 @@ func resolvePlayer(ref string, ctx *ScriptContext) (*Player, string, error) {
 		return nil, "", fmt.Errorf("unknown player reference: %s", ref)
 	}
 }
+
+// ============================================================================
+// SCRIPT FUNCTIONS
+// ============================================================================
 
 // scriptDraw: Draw(count, source, target)
 // source: "main", "vault"
@@ -553,6 +570,10 @@ func scriptDestroy(args []string, ctx *ScriptContext) []Event {
 		},
 	}}
 }
+
+// ============================================================================
+// COMBAT INSTANT FUNCTIONS
+// ============================================================================
 
 // scriptDamageCreature: DamageCreature(amount, target)
 // Deals damage to a target creature
