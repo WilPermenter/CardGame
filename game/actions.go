@@ -21,6 +21,7 @@ type Action struct {
     CardID     int                  `json:"cardId"`
     TargetID   int                  `json:"targetId"`
     DeckID     int                  `json:"deckId"`
+    AIDeckID   int                  `json:"aiDeckId"`   // For AI game: deck for the AI opponent
     InstanceID int                  `json:"instanceId"` // For targeting specific field cards
     Attacks    []AttackDeclaration  `json:"attacks"`    // For batch combat declarations
     Blockers   []BlockerDeclaration `json:"blockers"`   // For blocker assignments

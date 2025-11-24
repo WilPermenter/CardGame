@@ -46,8 +46,11 @@ func (g *Game) declareAttacks(a Action) []Event {
 		tauntIDs[fc.InstanceID] = true
 	}
 
-	// Validate attacks and build pending attacks
-	pendingAttacks := []PendingAttack{}
+	// FIRST PASS: Validate ALL attacks before tapping anything
+	validatedAttacks := []struct {
+		atk      AttackDeclaration
+		attacker *FieldCard
+	}{}
 
 	for _, atk := range a.Attacks {
 		// Find attacker
@@ -91,6 +94,14 @@ func (g *Game) declareAttacks(a Action) []Event {
 			if target == nil {
 				return []Event{{Type: "Error", Data: map[string]interface{}{"message": "Target creature not found", "targetInstanceId": atk.TargetInstanceID}}}
 			}
+			// Taunt check for creature targets
+			if hasTaunts && !tauntIDs[atk.TargetInstanceID] {
+				return []Event{{Type: "Error", Data: map[string]interface{}{
+					"message":          "Must attack a creature with Taunt",
+					"instanceId":       atk.AttackerInstanceID,
+					"targetInstanceId": atk.TargetInstanceID,
+				}}}
+			}
 		} else if atk.TargetType == "player" {
 			if validTargets == "Creatures" {
 				return []Event{{Type: "Error", Data: map[string]interface{}{"message": "This creature can only attack creatures", "instanceId": atk.AttackerInstanceID}}}
@@ -108,24 +119,23 @@ func (g *Game) declareAttacks(a Action) []Event {
 			return []Event{{Type: "Error", Data: map[string]interface{}{"message": "Invalid target type", "targetType": atk.TargetType}}}
 		}
 
-		// Taunt check for creature targets
-		if hasTaunts && atk.TargetType == "creature" && !tauntIDs[atk.TargetInstanceID] {
-			return []Event{{Type: "Error", Data: map[string]interface{}{
-				"message":          "Must attack a creature with Taunt",
-				"instanceId":       atk.AttackerInstanceID,
-				"targetInstanceId": atk.TargetInstanceID,
-			}}}
-		}
+		validatedAttacks = append(validatedAttacks, struct {
+			atk      AttackDeclaration
+			attacker *FieldCard
+		}{atk, attacker})
+	}
 
-		// Tap attacker
-		attacker.SetTapped(true)
-		attacker.CanAttack = false
+	// SECOND PASS: All attacks validated - now tap attackers and build pending attacks
+	pendingAttacks := []PendingAttack{}
+	for _, v := range validatedAttacks {
+		v.attacker.SetTapped(true)
+		v.attacker.CanAttack = false
 
 		pendingAttacks = append(pendingAttacks, PendingAttack{
-			AttackerInstanceID: atk.AttackerInstanceID,
-			TargetType:         atk.TargetType,
-			TargetInstanceID:   atk.TargetInstanceID,
-			TargetPlayerUID:    atk.TargetPlayerUID,
+			AttackerInstanceID: v.atk.AttackerInstanceID,
+			TargetType:         v.atk.TargetType,
+			TargetInstanceID:   v.atk.TargetInstanceID,
+			TargetPlayerUID:    v.atk.TargetPlayerUID,
 			BlockerInstanceID:  0,
 		})
 	}
@@ -175,6 +185,10 @@ func (g *Game) declareAttacks(a Action) []Event {
 			"attacks": pendingAttacks,
 		},
 	})
+
+	// Fire OnAttack triggers for the attacking player
+	triggerEvents := g.FireTriggers("OnAttack", a.PlayerUID, "")
+	events = append(events, triggerEvents...)
 
 	// Enter response window
 	g.CombatPhase = "response_window"
@@ -408,6 +422,11 @@ func (g *Game) resolveCombat() []Event {
 					"source": attackerCreature.InstanceID,
 				},
 			})
+
+			// Fire OnPlayerDamage triggers for the attacking player (their creature dealt damage)
+			triggerEvents := g.FireTriggers("OnPlayerDamage", g.AttackingPlayer, "")
+			events = append(events, triggerEvents...)
+
 			if attackerHasDoubleStrike {
 				defender.Life -= attackerDamage
 				events = append(events, Event{
@@ -419,6 +438,10 @@ func (g *Game) resolveCombat() []Event {
 						"doubleStrike": true,
 					},
 				})
+
+				// Fire OnPlayerDamage triggers again for double strike
+				triggerEvents := g.FireTriggers("OnPlayerDamage", g.AttackingPlayer, "")
+				events = append(events, triggerEvents...)
 			}
 		} else if pa.TargetType == "creature" {
 			var targetCreature *FieldCard
@@ -591,22 +614,38 @@ func resolveCombatDamage(
 	return events
 }
 
-// handleDeaths removes dead creatures from field
+// handleDeaths removes dead creatures and artifacts from field
 func (g *Game) handleDeaths(p *Player, playerUID string) []Event {
 	events := []Event{}
 	alive := []*FieldCard{}
 	for _, fc := range p.Field {
 		card := CardDB[fc.CardID]
-		if card.CardType == "Creature" && fc.IsDead() {
+		// Check for dead creatures or artifacts (artifacts die when health <= 0 too)
+		if (card.CardType == "Creature" || card.CardType == "Artifact") && fc.IsDead() {
 			p.Discard = append(p.Discard, fc.CardID)
+
+			// Remove any triggers this card created
+			g.RemoveTriggersForCard(fc.InstanceID)
+
+			eventType := "CreatureDied"
+			if card.CardType == "Artifact" {
+				eventType = "ArtifactDestroyed"
+			}
+
 			events = append(events, Event{
-				Type: "CreatureDied",
+				Type: eventType,
 				Data: map[string]interface{}{
 					"player":     playerUID,
 					"instanceId": fc.InstanceID,
 					"cardId":     fc.CardID,
 				},
 			})
+
+			// Fire OnCreatureDeath triggers (only for creatures, not artifacts)
+			if card.CardType == "Creature" {
+				triggerEvents := g.FireTriggers("OnCreatureDeath", playerUID, "")
+				events = append(events, triggerEvents...)
+			}
 		} else {
 			alive = append(alive, fc)
 		}

@@ -61,6 +61,8 @@ func (c *Connection) readLoop() {
 			c.handleGetDecks(action)
 		case "start_game":
 			c.handleStartGame(action)
+		case "start_ai_game":
+			c.handleStartAIGame(action)
 		case "join_game":
 			c.handleJoinGame(action)
 		case "list_games":

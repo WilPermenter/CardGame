@@ -3,6 +3,7 @@ package server
 
 import (
 	"encoding/json"
+	"time"
 
 	"card-game/game"
 
@@ -84,6 +85,76 @@ func (c *Connection) handleStartGame(action game.Action) {
 
 	resp, _ := json.Marshal(events)
 	c.ws.WriteMessage(websocket.TextMessage, resp)
+}
+
+func (c *Connection) handleStartAIGame(action game.Action) {
+	c.PlayerUID = action.PlayerUID
+
+	// Use player's deck for AI if not specified
+	aiDeckID := action.AIDeckID
+	if aiDeckID == 0 {
+		aiDeckID = action.DeckID
+	}
+
+	g, _, err := game.Manager.CreateAIGame(action.PlayerUID, action.DeckID, aiDeckID)
+	if err != nil {
+		events := []game.Event{
+			{Type: "Error", Data: map[string]interface{}{"message": err.Error()}},
+		}
+		resp, _ := json.Marshal(events)
+		c.ws.WriteMessage(websocket.TextMessage, resp)
+		return
+	}
+
+	c.GameID = g.ID
+	GameHub.JoinGame(c, g.ID)
+
+	// Build player info
+	player := g.Players[action.PlayerUID]
+	aiPlayer := g.Players[g.AIPlayer]
+
+	playersInfo := map[string]interface{}{
+		action.PlayerUID: map[string]interface{}{
+			"hand":        player.Hand,
+			"leader":      player.Leader,
+			"deckSize":    len(player.DrawPile),
+			"vaultSize":   len(player.VaultPile),
+			"discardSize": len(player.Discard),
+		},
+		g.AIPlayer: map[string]interface{}{
+			"hand":        len(aiPlayer.Hand), // Don't reveal AI hand, just count
+			"leader":      aiPlayer.Leader,
+			"deckSize":    len(aiPlayer.DrawPile),
+			"vaultSize":   len(aiPlayer.VaultPile),
+			"discardSize": len(aiPlayer.Discard),
+		},
+	}
+
+	events := []game.Event{
+		{
+			Type: "AIGameCreated",
+			Data: map[string]interface{}{
+				"gameId":     g.ID,
+				"playerUid":  action.PlayerUID,
+				"aiUid":      g.AIPlayer,
+				"players":    playersInfo,
+				"isAIGame":   true,
+			},
+		},
+		{
+			Type: "MulliganPhase",
+			Data: map[string]interface{}{
+				"gameId":  g.ID,
+				"players": playersInfo,
+			},
+		},
+	}
+
+	resp, _ := json.Marshal(events)
+	c.ws.WriteMessage(websocket.TextMessage, resp)
+
+	// Run AI mulligan decision
+	c.runAITurns(g)
 }
 
 func (c *Connection) handleJoinGame(action game.Action) {
@@ -211,6 +282,11 @@ func (c *Connection) handleGameAction(action game.Action) {
 
 	// Broadcast events to all players in the game
 	GameHub.Broadcast(c.GameID, events)
+
+	// Run AI turns if this is an AI game
+	if g.AIPlayer != "" && g.Winner == "" {
+		c.runAITurns(g)
+	}
 }
 
 func (c *Connection) handleLeaveGame(action game.Action) {
@@ -410,5 +486,45 @@ func (c *Connection) handleReconnectGame(action game.Action) {
 			},
 		}
 		GameHub.BroadcastExcept(g.ID, c, reconnectNotify)
+	}
+}
+
+// runAITurns executes AI actions until it's the player's turn
+func (c *Connection) runAITurns(g *game.Game) {
+	if g.AIPlayer == "" || g.Winner != "" {
+		return
+	}
+
+	// Run AI actions in a loop with small delays
+	for i := 0; i < 50; i++ { // Safety limit to prevent infinite loops
+		if g.Winner != "" {
+			break
+		}
+
+		// Not AI's turn and not AI's priority - stop
+		if g.Turn != g.AIPlayer && g.PriorityPlayer != g.AIPlayer {
+			break
+		}
+
+		action := g.BotDecide(g.AIPlayer)
+		if action == nil {
+			break
+		}
+
+		// Small delay to make AI actions visible
+		time.Sleep(300 * time.Millisecond)
+
+		events := g.HandleAction(*action)
+		GameHub.Broadcast(c.GameID, events)
+
+		// If we just ended turn, stop and let player go
+		if action.Type == "end_turn" {
+			break
+		}
+
+		// If we passed priority during combat and opponent now has priority, wait for them
+		if action.Type == "pass_priority" && g.CombatPhase == "response_window" && g.PriorityPlayer != g.AIPlayer {
+			break
+		}
 	}
 }

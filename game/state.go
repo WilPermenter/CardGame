@@ -35,6 +35,114 @@ type Game struct {
     // Cleanup tracking
     LastActivity time.Time           // Updated on every action
     Disconnects  map[string]time.Time // playerUID -> disconnect time
+
+    // AI opponent
+    AIPlayer string // UID of AI player, empty if PvP
+
+    // Trigger system for artifacts and other persistent effects
+    Triggers      []Trigger
+    NextTriggerID int
+}
+
+// Trigger represents a registered trigger from an artifact or other source
+type Trigger struct {
+    ID           int    // Unique trigger ID
+    SourceID     int    // InstanceID of the card that created this trigger
+    OwnerUID     string // UID of the player who owns the trigger
+    EventType    string // "OnDraw", "OnCreatureEnter", "OnDamage", etc.
+    Condition    string // Condition like "isself" (only triggers for owner)
+    SourceFilter string // For OnDraw: "main", "vault", or "any"
+    Effect       string // The effect to execute, e.g., "Draw(1)"
+}
+
+// RegisterTrigger adds a new trigger to the game
+func (g *Game) RegisterTrigger(sourceID int, ownerUID, eventType, condition, sourceFilter, effect string) int {
+    trigger := Trigger{
+        ID:           g.NextTriggerID,
+        SourceID:     sourceID,
+        OwnerUID:     ownerUID,
+        EventType:    eventType,
+        Condition:    condition,
+        SourceFilter: sourceFilter,
+        Effect:       effect,
+    }
+    g.NextTriggerID++
+    g.Triggers = append(g.Triggers, trigger)
+    return trigger.ID
+}
+
+// RemoveTriggersForCard removes all triggers created by a card (when it leaves play)
+func (g *Game) RemoveTriggersForCard(instanceID int) {
+    filtered := []Trigger{}
+    for _, t := range g.Triggers {
+        if t.SourceID != instanceID {
+            filtered = append(filtered, t)
+        }
+    }
+    g.Triggers = filtered
+}
+
+// FireTriggers fires all triggers matching the event type and returns events
+func (g *Game) FireTriggers(eventType string, triggerPlayerUID string, source string) []Event {
+    events := []Event{}
+
+    for _, trigger := range g.Triggers {
+        if trigger.EventType != eventType {
+            continue
+        }
+
+        // Check condition
+        shouldFire := false
+        switch trigger.Condition {
+        case "isself":
+            // Only fires for the trigger owner
+            shouldFire = triggerPlayerUID == trigger.OwnerUID
+        case "isopponent":
+            // Only fires for opponents
+            shouldFire = triggerPlayerUID != trigger.OwnerUID
+        case "":
+            // No condition, always fires
+            shouldFire = true
+        default:
+            shouldFire = true
+        }
+
+        // Source filter check for OnDraw (main vs vault)
+        if eventType == "OnDraw" && trigger.SourceFilter != "" && trigger.SourceFilter != "any" {
+            if trigger.SourceFilter != source {
+                continue // Source doesn't match filter
+            }
+        }
+
+        if !shouldFire {
+            continue
+        }
+
+        // Find the source card to get owner info
+        sourceCard := g.FindFieldCard(trigger.SourceID)
+        if sourceCard == nil {
+            continue // Source card no longer exists
+        }
+
+        player := g.Players[trigger.OwnerUID]
+        if player == nil {
+            continue
+        }
+
+        // Execute the trigger effect
+        ctx := &ScriptContext{
+            Game:             g,
+            Card:             sourceCard,
+            Caster:           player,
+            CasterUID:        trigger.OwnerUID,
+            TriggerPlayerUID: triggerPlayerUID,
+        }
+
+        triggerEvents := ExecuteScript(trigger.Effect, ctx)
+        events = append(events, triggerEvents...)
+    }
+
+    return events
 }
 
 // PendingAttack represents an attack waiting for blocker assignment
@@ -169,6 +277,18 @@ func (fc *FieldCard) IsDead() bool {
     return fc.CurrentHealth <= 0
 }
 
+// FindFieldCard finds a FieldCard by instanceId across all players' fields
+func (g *Game) FindFieldCard(instanceID int) *FieldCard {
+    for _, player := range g.Players {
+        for _, fc := range player.Field {
+            if fc.InstanceID == instanceID {
+                return fc
+            }
+        }
+    }
+    return nil
+}
+
 const InitialMainDeckDraw = 5
 const InitialVaultDraw = 2
 const DefaultMinHandLimit = 1
@@ -263,6 +383,48 @@ func (gm *GameManager) CreateGame(playerUID string, deckID int) (*Game, *Player,
 
     gm.games[gameID] = g
     gm.waiting = g
+
+    return g, player, nil
+}
+
+// CreateAIGame creates a game with an AI opponent
+func (gm *GameManager) CreateAIGame(playerUID string, playerDeckID int, aiDeckID int) (*Game, *Player, error) {
+    gm.mu.Lock()
+    defer gm.mu.Unlock()
+
+    playerDeck, ok := DeckDB[playerDeckID]
+    if !ok {
+        return nil, nil, fmt.Errorf("player deck not found: %d", playerDeckID)
+    }
+
+    aiDeck, ok := DeckDB[aiDeckID]
+    if !ok {
+        return nil, nil, fmt.Errorf("AI deck not found: %d", aiDeckID)
+    }
+
+    gameID := fmt.Sprintf("game_%d", gm.nextID)
+    gm.nextID++
+
+    aiUID := "AI_Bot"
+
+    player := NewPlayer(playerUID, playerDeck)
+    aiPlayer := NewPlayer(aiUID, aiDeck)
+
+    g := &Game{
+        ID:                gameID,
+        Players:           map[string]*Player{playerUID: player, aiUID: aiPlayer},
+        Turn:              playerUID, // Human goes first
+        Started:           false,
+        NextInstanceID:    1,
+        AIPlayer:          aiUID,
+        MulliganPhase:     true,
+        MulliganDecisions: make(map[string]bool),
+    }
+
+    // Draw initial hands
+    g.DrawInitialHands()
+
+    gm.games[gameID] = g
 
     return g, player, nil
 }

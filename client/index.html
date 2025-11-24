@@ -79,11 +79,30 @@
             margin-top: 4px;
         }
         .burn-btn:hover { background: #e64a19; }
+        /* Activate ability button */
+        .activate-btn {
+            background: #9c27b0;
+            color: white;
+            border: none;
+            padding: 3px 8px;
+            font-size: 10px;
+            cursor: pointer;
+            border-radius: 3px;
+            margin-top: 4px;
+            display: block;
+            width: 100%;
+        }
+        .activate-btn:hover { background: #7b1fa2; }
+        body.dark-mode .activate-btn { background: #ce93d8; color: #1a1a1a; }
+        body.dark-mode .activate-btn:hover { background: #ba68c8; }
         /* Combat styles */
         .field-card.selected-attacker { border-color: #2196f3; background: #e3f2fd; box-shadow: 0 0 10px #2196f3; }
         .field-card.attacking { border-color: #ff5722; background: #fff3e0; }
         .field-card.targetable { border-color: #e91e63; background: #fce4ec; }
         .field-card.targeted { border-color: #9c27b0; background: #f3e5f5; box-shadow: 0 0 10px #9c27b0; }
+        /* Spell targeting styles */
+        .card.selected-spell { border-color: #ff9800; background: #fff3e0; box-shadow: 0 0 10px #ff9800; }
+        body.dark-mode .card.selected-spell { border-color: #ff9800; background: #3d3525; box-shadow: 0 0 10px #ff9800; }
         .health-box.targetable { border-color: #e91e63; background: #fce4ec; cursor: crosshair; }
         .health-box.targeted { border-color: #9c27b0; background: #f3e5f5; box-shadow: 0 0 10px #9c27b0; }
         /* Abilities styling */
@@ -280,6 +299,7 @@
                 <br><br>
             </div>
             <button onclick="startGame()" id="start-btn">Create Game</button>
+            <button onclick="startAIGame()" id="ai-btn" style="background:#9c27b0;">Play vs AI</button>
             <button onclick="refreshGameList()" id="browse-btn">Browse Games</button>
             <button id="reconnect-btn" style="display:none; background:#ff9800; color:white;">Reconnect</button>
             <button onclick="leaveGame()" id="leave-btn" style="display:none;">Leave Game</button>

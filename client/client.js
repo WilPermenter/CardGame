@@ -49,6 +49,11 @@ let myInstants = [];
 let selectedInstant = null;
 let attacksInProgress = [];
 
+// Spell targeting state (for spells that need targets during main phase)
+let spellTargetMode = false;
+let selectedSpell = null;
+let spellTargetType = null; // "friendly", "enemy", or "any"
+
 // ============================================================================
 // COOKIE & STORAGE HELPERS
 // ============================================================================
@@ -158,6 +163,15 @@ ws.onmessage = (msg) => {
                 gameId = event.data.gameId;
                 saveGameState();
                 setStatus("Waiting for opponent to join... (Game ID: " + gameId + ")");
+                break;
+
+            case "AIGameCreated":
+                gameId = event.data.gameId;
+                window.opponentUID = event.data.aiUid;
+                window.isAIGame = true;
+                saveGameState();
+                setStatus("AI Game started! (Game ID: " + gameId + ")");
+                log("Playing against AI: " + event.data.aiUid);
                 break;
 
             case "CardList":
@@ -292,6 +306,28 @@ ws.onmessage = (msg) => {
                 }
                 break;
 
+            case "ScriptDraw":
+                // Cards drawn from triggers/scripts (like artifacts)
+                if (event.data.player === myUID) {
+                    // Add all drawn cards to hand
+                    if (event.data.cards) {
+                        for (const cardId of event.data.cards) {
+                            myHand.push(cardId);
+                        }
+                    }
+                    // Update deck counts
+                    if (event.data.mainDeckSize !== undefined) {
+                        myDeckSize = event.data.mainDeckSize;
+                    }
+                    if (event.data.vaultSize !== undefined) {
+                        myVaultSize = event.data.vaultSize;
+                    }
+                    renderHand();
+                    updateDeckDisplay();
+                    log("Drew " + event.data.count + " card(s) from trigger");
+                }
+                break;
+
             case "CreaturePlayed":
                 // Creature moved from hand to field
                 if (event.data.player === myUID) {
@@ -356,6 +392,47 @@ ws.onmessage = (msg) => {
                     }
                     renderOpponentLands();
                 }
+                break;
+
+            case "ArtifactPlayed":
+                // Artifact moved from hand to field (artifacts go in creatures area)
+                if (event.data.player === myUID) {
+                    const idx = myHand.indexOf(event.data.cardId);
+                    if (idx > -1) myHand.splice(idx, 1);
+                    if (event.data.fieldCard) {
+                        myField.push(event.data.fieldCard);
+                    }
+                    if (event.data.manaPool) {
+                        myManaPool = event.data.manaPool;
+                        updateManaPoolDisplay();
+                    }
+                    renderHand();
+                    renderField();
+                } else {
+                    // Opponent played an artifact
+                    if (event.data.fieldCard) {
+                        opponentField.push(event.data.fieldCard);
+                    }
+                    renderOpponentField();
+                }
+                log("Artifact played: " + (cardDB[event.data.cardId]?.Name || event.data.cardId));
+                break;
+
+            case "TriggerRegistered":
+                // Just log trigger registration
+                log("Trigger registered: " + event.data.eventType + " on card " + event.data.sourceId);
+                break;
+
+            case "ArtifactDestroyed":
+                // Similar to CreatureDied but for artifacts
+                if (event.data.player === myUID) {
+                    myField = myField.filter(fc => fc.instanceId !== event.data.instanceId);
+                    renderField();
+                } else {
+                    opponentField = opponentField.filter(fc => fc.instanceId !== event.data.instanceId);
+                    renderOpponentField();
+                }
+                log("Artifact destroyed: " + (cardDB[event.data.cardId]?.Name || event.data.cardId));
                 break;
 
             case "CardPlayed":
@@ -756,6 +833,147 @@ ws.onmessage = (msg) => {
                 log("Script error: " + event.data.error);
                 break;
 
+            case "ScriptMill":
+                // Cards milled from deck to graveyard
+                if (event.data.player === myUID) {
+                    myDeckSize = event.data.mainDeckSize;
+                    myDiscardSize += event.data.milled.length;
+                    updateDeckDisplay();
+                }
+                log(`${event.data.player === myUID ? "You" : "Opponent"} milled ${event.data.milled.length} card(s)`);
+                break;
+
+            case "ScriptSummon":
+                // Token creatures summoned onto field
+                if (event.data.player === myUID) {
+                    for (const summon of event.data.summoned) {
+                        const card = cardDB[summon.cardId];
+                        const fieldCard = {
+                            instanceId: summon.instanceId,
+                            cardId: summon.cardId,
+                            currentHealth: card ? card.Defense : 1,
+                            damageModifier: 0,
+                            healthModifier: 0,
+                            canAttack: true,
+                            status: { Summoned: 0, Tapped: 0 }
+                        };
+                        myField.push(fieldCard);
+                    }
+                    renderField();
+                } else {
+                    for (const summon of event.data.summoned) {
+                        const card = cardDB[summon.cardId];
+                        const fieldCard = {
+                            instanceId: summon.instanceId,
+                            cardId: summon.cardId,
+                            currentHealth: card ? card.Defense : 1,
+                            damageModifier: 0,
+                            healthModifier: 0,
+                            canAttack: true,
+                            status: { Summoned: 0, Tapped: 0 }
+                        };
+                        opponentField.push(fieldCard);
+                    }
+                    renderOpponentField();
+                }
+                const summonCard = cardDB[event.data.cardId];
+                log(`${event.data.player === myUID ? "You" : "Opponent"} summoned ${event.data.count}x ${summonCard ? summonCard.Name : "token"}`);
+                break;
+
+            case "ScriptReanimate":
+                // Creature reanimated from graveyard
+                if (event.data.player === myUID) {
+                    const card = cardDB[event.data.cardId];
+                    const fieldCard = {
+                        instanceId: event.data.instanceId,
+                        cardId: event.data.cardId,
+                        currentHealth: card ? card.Defense : 1,
+                        damageModifier: 0,
+                        healthModifier: 0,
+                        canAttack: true,
+                        status: { Summoned: 0, Tapped: 0 }
+                    };
+                    myField.push(fieldCard);
+                    myDiscardSize = event.data.graveyardSize;
+                    renderField();
+                    updateDeckDisplay();
+                } else {
+                    const card = cardDB[event.data.cardId];
+                    const fieldCard = {
+                        instanceId: event.data.instanceId,
+                        cardId: event.data.cardId,
+                        currentHealth: card ? card.Defense : 1,
+                        damageModifier: 0,
+                        healthModifier: 0,
+                        canAttack: true,
+                        status: { Summoned: 0, Tapped: 0 }
+                    };
+                    opponentField.push(fieldCard);
+                    renderOpponentField();
+                }
+                const reanimateCard = cardDB[event.data.cardId];
+                log(`${event.data.player === myUID ? "You" : "Opponent"} reanimated ${reanimateCard ? reanimateCard.Name : "creature"}`);
+                break;
+
+            case "ScriptZombify":
+                // Creature sacrificed and zombified copy created
+                if (event.data.player === myUID) {
+                    // Remove sacrificed creature
+                    myField = myField.filter(fc => fc.instanceId !== event.data.sacrificedId);
+                    myDiscardSize++;
+                    // Add zombie copy
+                    const card = cardDB[event.data.cardId];
+                    const zombieCard = {
+                        instanceId: event.data.newInstanceId,
+                        cardId: event.data.cardId,
+                        currentHealth: event.data.zombieHealth,
+                        damageModifier: event.data.attack - (card ? card.Attack : 0),
+                        healthModifier: event.data.zombieHealth - (card ? card.Defense : 0),
+                        canAttack: true,
+                        status: { Summoned: 0, Tapped: 0, Zombified: 1 }
+                    };
+                    myField.push(zombieCard);
+                    renderField();
+                    updateDeckDisplay();
+                } else {
+                    opponentField = opponentField.filter(fc => fc.instanceId !== event.data.sacrificedId);
+                    const card = cardDB[event.data.cardId];
+                    const zombieCard = {
+                        instanceId: event.data.newInstanceId,
+                        cardId: event.data.cardId,
+                        currentHealth: event.data.zombieHealth,
+                        damageModifier: event.data.attack - (card ? card.Attack : 0),
+                        healthModifier: event.data.zombieHealth - (card ? card.Defense : 0),
+                        canAttack: true,
+                        status: { Summoned: 0, Tapped: 0, Zombified: 1 }
+                    };
+                    opponentField.push(zombieCard);
+                    renderOpponentField();
+                }
+                const zombifyCard = cardDB[event.data.cardId];
+                log(`${event.data.player === myUID ? "You" : "Opponent"} zombified ${zombifyCard ? zombifyCard.Name : "creature"} (${event.data.zombieHealth} HP)`);
+                break;
+
+            case "ScriptSacrifice":
+                // Creature sacrificed (removed from field)
+                if (event.data.player === myUID) {
+                    myField = myField.filter(fc => fc.instanceId !== event.data.instanceId);
+                    myDiscardSize++;
+                    renderField();
+                    updateDeckDisplay();
+                } else {
+                    opponentField = opponentField.filter(fc => fc.instanceId !== event.data.instanceId);
+                    renderOpponentField();
+                }
+                const sacCard = cardDB[event.data.cardId];
+                log(`${event.data.player === myUID ? "Your" : "Opponent's"} ${sacCard ? sacCard.Name : "creature"} was sacrificed`);
+                break;
+
+            case "ScriptSummonPerGraveyard":
+                // Handled same as ScriptSummon but with graveyard context
+                log(`Summoned ${event.data.count} tokens based on graveyard (${event.data.graveyardSize} cards)`);
+                break;
+
             case "ScriptTap":
                 // Creature was tapped by a script
                 {
@@ -910,6 +1128,29 @@ function startGame() {
     showInGameLobby();
 }
 
+function startAIGame() {
+    myUID = getUID();
+    if (!myUID) {
+        alert("Please enter a UID");
+        return;
+    }
+
+    selectedDeckId = getSelectedDeck();
+    if (!selectedDeckId) {
+        alert("Please select a deck");
+        return;
+    }
+
+    ws.send(JSON.stringify({
+        playerUid: myUID,
+        type: "start_ai_game",
+        deckId: selectedDeckId,
+        aiDeckId: selectedDeckId  // AI uses same deck, could make this selectable
+    }));
+    setStatus("Starting AI game...");
+    showInGameLobby();
+}
+
 function joinGame() {
     myUID = getUID();
     if (!myUID) {
@@ -954,11 +1195,87 @@ function playCard(cardId) {
         alert("Not your turn!");
         return;
     }
+
+    // Check if this spell needs a target
+    const card = cardDB[cardId];
+    if (card && needsTarget(card)) {
+        startSpellTargeting(cardId);
+        return;
+    }
+
     ws.send(JSON.stringify({
         playerUid: myUID,
         type: "play_card",
         cardId: cardId
     }));
+}
+
+// Check if a card's script requires a target
+function needsTarget(card) {
+    if (!card || !card.CustomScript) return false;
+    // Check if script uses 'target' as a parameter (with or without type suffix)
+    const script = card.CustomScript.toLowerCase();
+    return script.includes("'target") || script.includes('"target');
+}
+
+// Get the target type from a card's script ('friendly', 'enemy', or 'any')
+function getTargetType(card) {
+    if (!card || !card.CustomScript) return "any";
+    const script = card.CustomScript.toLowerCase();
+    if (script.includes("'target:friendly'") || script.includes('"target:friendly"')) {
+        return "friendly";
+    }
+    if (script.includes("'target:enemy'") || script.includes('"target:enemy"')) {
+        return "enemy";
+    }
+    // Default to 'any' for 'target:any' or just 'target'
+    return "any";
+}
+
+// Enter spell targeting mode
+function startSpellTargeting(cardId) {
+    const card = cardDB[cardId];
+    spellTargetMode = true;
+    selectedSpell = cardId;
+    spellTargetType = getTargetType(card);
+    renderHand();
+    renderField();
+    renderOpponentField();
+
+    let targetDesc = "a creature";
+    if (spellTargetType === "friendly") targetDesc = "one of your creatures";
+    else if (spellTargetType === "enemy") targetDesc = "an enemy creature";
+    setStatus(`Select ${targetDesc} for your spell (click a creature, or press ESC to cancel)`);
+}
+
+// Cancel spell targeting
+function cancelSpellTargeting() {
+    spellTargetMode = false;
+    selectedSpell = null;
+    spellTargetType = null;
+    renderHand();
+    renderField();
+    renderOpponentField();
+    updateTurnStatus();
+}
+
+// Play spell with target
+function playSpellWithTarget(targetInstanceId) {
+    if (!spellTargetMode || selectedSpell === null) return;
+
+    ws.send(JSON.stringify({
+        playerUid: myUID,
+        type: "play_card",
+        cardId: selectedSpell,
+        instanceId: targetInstanceId
+    }));
+
+    spellTargetMode = false;
+    selectedSpell = null;
+    spellTargetType = null;
+    renderHand();
+    renderField();
+    renderOpponentField();
 }
 
 function renderHand() {
@@ -968,7 +1285,11 @@ function renderHand() {
     for (const cardId of myHand) {
         const card = cardDB[cardId];
         const cardEl = document.createElement("div");
-        cardEl.className = "card";
+        let classes = "card";
+        if (spellTargetMode && selectedSpell === cardId) {
+            classes += " selected-spell";
+        }
+        cardEl.className = classes;
         cardEl.onclick = () => playCard(cardId);
 
         if (card) {
@@ -1169,6 +1490,44 @@ function formatAbilities(abilities) {
     return `<div class="card-abilities">${abilities.join(', ')}</div>`;
 }
 
+// Check if a card has an activated ability (TapAbility in script)
+function hasActivatedAbility(card) {
+    if (!card || !card.CustomScript) return false;
+    return card.CustomScript.toLowerCase().includes("tapability");
+}
+
+// Activate a creature's ability
+function activateAbility(instanceId) {
+    if (currentTurn !== myUID) {
+        alert("Not your turn!");
+        return;
+    }
+    ws.send(JSON.stringify({
+        playerUid: myUID,
+        type: "activate_ability",
+        instanceId: instanceId
+    }));
+}
+
+// Get attack target text for a creature
+function getAttackTargetText(instanceId, attacks, isMyCreature) {
+    const attack = attacks.find(a => a.attackerInstanceId === instanceId);
+    if (!attack) return null;
+
+    if (attack.targetType === "player") {
+        return isMyCreature ? "Attacking Player" : "Attacking You";
+    } else {
+        // Find target creature name
+        const targetCreature = findFieldCard(myField, attack.targetInstanceId)
+                            || findFieldCard(opponentField, attack.targetInstanceId);
+        if (targetCreature) {
+            const card = cardDB[targetCreature.cardId];
+            return "Attacking " + (card ? card.Name : "Creature");
+        }
+        return "Attacking Creature";
+    }
+}
+
 function renderField() {
     const fieldEl = document.getElementById("field");
     fieldEl.innerHTML = "";
@@ -1188,8 +1547,15 @@ function renderField() {
         if (isAttacking) classes += " attacking";
         cardEl.className = classes;
 
+        // Spell targeting mode - click to target own creatures (only if friendly or any)
+        if (spellTargetMode && selectedSpell !== null && (spellTargetType === "friendly" || spellTargetType === "any")) {
+            cardEl.classList.add("targetable");
+            cardEl.style.cursor = "crosshair";
+            const instanceId = fc.instanceId;
+            cardEl.onclick = () => playSpellWithTarget(instanceId);
+        }
         // Response window - click to target own creatures (for buff instants)
-        if (inResponseWindow && selectedInstant !== null && hasPriority) {
+        else if (inResponseWindow && selectedInstant !== null && hasPriority) {
             cardEl.classList.add("targetable");
             cardEl.style.cursor = "crosshair";
             const instanceId = fc.instanceId;
@@ -1212,7 +1578,8 @@ function renderField() {
             } else if (isSummoned) {
                 statusText = '<div style="color:#999;font-size:10px;">Summoned</div>';
             } else if (isAttacking) {
-                statusText = '<div style="color:#f44336;font-size:10px;">Attacking</div>';
+                const targetText = getAttackTargetText(fc.instanceId, pendingAttacks.length > 0 ? pendingAttacks : attacksInProgress, true);
+                statusText = `<div style="color:#f44336;font-size:10px;">${targetText || 'Attacking'}</div>`;
             } else if (isSelected) {
                 statusText = '<div style="color:#2196f3;font-size:10px;">Select Target</div>';
             } else {
@@ -1220,13 +1587,26 @@ function renderField() {
             }
             const abilitiesStr = formatAbilities(card.Abilities);
             const tooltip = card.CardText ? `<div class="card-tooltip">${card.CardText}</div>` : '';
+
+            // Add activate button for creatures with activated abilities
+            let activateBtn = '';
+            if (hasActivatedAbility(card) && !isTapped && currentTurn === myUID) {
+                activateBtn = `<button class="activate-btn" onclick="event.stopPropagation(); activateAbility(${fc.instanceId});">Activate</button>`;
+            }
+
+            // Show zombified status
+            const isZombified = fc.status && fc.status.Zombified > 0;
+            const zombieTag = isZombified ? '<div style="color:#9c27b0;font-size:9px;">Zombified</div>' : '';
+
             cardEl.innerHTML = `
                 ${tooltip}
                 <div class="card-name">${card.Name}</div>
                 <div class="card-attack">ATK: ${effectiveAttack}</div>
                 <div class="card-health">HP: ${effectiveHealth}/${maxHealth}</div>
                 ${abilitiesStr}
+                ${zombieTag}
                 ${statusText}
+                ${activateBtn}
             `;
         } else {
             cardEl.innerHTML = `<div class="card-name">Card #${fc.cardId}</div>`;
@@ -1336,10 +1716,16 @@ function renderOpponentField() {
         if (isTargeted) classes += " targeted";
         if (combatMode && selectedAttacker !== null) classes += " targetable";
         if (inResponseWindow && selectedInstant !== null && hasPriority) classes += " targetable";
+        if (spellTargetMode && selectedSpell !== null && (spellTargetType === "enemy" || spellTargetType === "any")) classes += " targetable";
         cardEl.className = classes;
 
+        // Spell targeting mode - click to target opponent creatures (only if enemy or any)
+        if (spellTargetMode && selectedSpell !== null && (spellTargetType === "enemy" || spellTargetType === "any")) {
+            cardEl.onclick = () => playSpellWithTarget(fc.instanceId);
+            cardEl.style.cursor = "crosshair";
+        }
         // Response window - click to target opponent creatures
-        if (inResponseWindow && selectedInstant !== null && hasPriority) {
+        else if (inResponseWindow && selectedInstant !== null && hasPriority) {
             cardEl.onclick = () => playInstant(fc.instanceId);
             cardEl.style.cursor = "crosshair";
         }
@@ -1375,7 +1761,16 @@ function renderOpponentField() {
         const maxHealth = (card?.Defense || 0) + (fc.healthModifier || 0);
 
         if (card) {
-            let targetText = isTargeted ? '<div style="color:#ff5722;font-size:10px;">Targeted</div>' : '';
+            let statusText = '';
+            if (isTargeted) {
+                statusText = '<div style="color:#ff5722;font-size:10px;">Targeted</div>';
+            } else {
+                // Check if this opponent creature is attacking
+                const attackText = getAttackTargetText(fc.instanceId, attacksInProgress, false);
+                if (attackText) {
+                    statusText = `<div style="color:#f44336;font-size:10px;">${attackText}</div>`;
+                }
+            }
             const abilitiesStr = formatAbilities(card.Abilities);
             const tooltip = card.CardText ? `<div class="card-tooltip">${card.CardText}</div>` : '';
             cardEl.innerHTML = `
@@ -1384,7 +1779,7 @@ function renderOpponentField() {
                 <div class="card-attack">ATK: ${effectiveAttack}</div>
                 <div class="card-health">HP: ${effectiveHealth}/${maxHealth}</div>
                 ${abilitiesStr}
-                ${targetText}
+                ${statusText}
             `;
         } else {
             cardEl.innerHTML = `<div class="card-name">Card #${fc.cardId}</div>`;
@@ -1898,3 +2293,22 @@ function passPriority() {
         type: "pass_priority"
     }));
 }
+
+// Global key handler for ESC to cancel targeting modes
+document.addEventListener("keydown", function(e) {
+    if (e.key === "Escape") {
+        if (spellTargetMode) {
+            cancelSpellTargeting();
+        } else if (combatMode && selectedAttacker !== null) {
+            selectedAttacker = null;
+            renderField();
+            renderOpponentField();
+            updateCombatUI();
+        } else if (selectedInstant !== null) {
+            selectedInstant = null;
+            updateResponseUI();
+            renderField();
+            renderOpponentField();
+        }
+    }
+});

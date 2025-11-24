@@ -1,6 +1,21 @@
 // cards_play.go - Card playing, tapping, burning
 package game
 
+import "strings"
+
+// getScriptTargetType extracts the target type from a script
+// Returns "friendly", "enemy", or "any"
+func getScriptTargetType(script string) string {
+	s := strings.ToLower(script)
+	if strings.Contains(s, "'target:friendly'") || strings.Contains(s, "\"target:friendly\"") {
+		return "friendly"
+	}
+	if strings.Contains(s, "'target:enemy'") || strings.Contains(s, "\"target:enemy\"") {
+		return "enemy"
+	}
+	return "any"
+}
+
 // playCard handles playing a card from hand
 func (g *Game) playCard(a Action) []Event {
 	player := g.Players[a.PlayerUID]
@@ -68,6 +83,10 @@ func (g *Game) playCard(a Action) []Event {
 			}
 		}
 
+		// Fire OnCreatureEnter triggers (for artifacts like Shared Harvest)
+		triggerEvents := g.FireTriggers("OnCreatureEnter", a.PlayerUID, "")
+		events = append(events, triggerEvents...)
+
 	case "Land":
 		if player.LandsPlayedThisTurn >= player.LandsPerTurn {
 			player.Hand = append(player.Hand, a.CardID)
@@ -94,6 +113,36 @@ func (g *Game) playCard(a Action) []Event {
 			},
 		})
 
+	case "Artifact":
+		// Artifacts go on field but can't attack - no summoning sickness
+		fieldCard := g.NewFieldCard(a.CardID, a.PlayerUID, a.PlayerUID)
+		fieldCard.Status["Summoned"] = 0 // Artifacts don't have summoning sickness
+		fieldCard.CanAttack = false      // Artifacts can't attack
+		player.Field = append(player.Field, fieldCard)
+
+		events = append(events, Event{
+			Type: "ArtifactPlayed",
+			Data: map[string]interface{}{
+				"player":     a.PlayerUID,
+				"cardId":     a.CardID,
+				"instanceId": fieldCard.InstanceID,
+				"fieldCard":  fieldCard,
+				"manaPool":   player.ManaPool,
+			},
+		})
+
+		// Execute artifact script (registers triggers)
+		if card.CustomScript != "" {
+			ctx := &ScriptContext{
+				Game:      g,
+				Card:      fieldCard,
+				Caster:    player,
+				CasterUID: a.PlayerUID,
+			}
+			scriptEvents := ExecuteScript(card.CustomScript, ctx)
+			events = append(events, scriptEvents...)
+		}
+
 	default:
 		// Spells go to discard
 		player.Discard = append(player.Discard, a.CardID)
@@ -109,11 +158,42 @@ func (g *Game) playCard(a Action) []Event {
 
 		// Execute spell script
 		if card.CustomScript != "" {
+			// Look up target creature if instanceId was provided
+			var targetCard *FieldCard
+			if a.InstanceID != 0 {
+				targetCard = g.FindFieldCard(a.InstanceID)
+
+				// Validate target type based on script
+				if targetCard != nil {
+					targetType := getScriptTargetType(card.CustomScript)
+					isFriendly := targetCard.Owner == a.PlayerUID
+
+					if targetType == "friendly" && !isFriendly {
+						// Refund mana and return card to hand
+						player.ManaPool.Add(card.Cost)
+						player.Hand = append(player.Hand, a.CardID)
+						player.Discard = player.Discard[:len(player.Discard)-1]
+						return []Event{{Type: "Error", Data: map[string]interface{}{
+							"message": "This spell can only target your own creatures",
+						}}}
+					}
+					if targetType == "enemy" && isFriendly {
+						player.ManaPool.Add(card.Cost)
+						player.Hand = append(player.Hand, a.CardID)
+						player.Discard = player.Discard[:len(player.Discard)-1]
+						return []Event{{Type: "Error", Data: map[string]interface{}{
+							"message": "This spell can only target enemy creatures",
+						}}}
+					}
+				}
+			}
+
 			ctx := &ScriptContext{
 				Game:      g,
 				Card:      nil,
 				Caster:    player,
 				CasterUID: a.PlayerUID,
+				Target:    targetCard,
 			}
 			scriptEvents := ExecuteScript(card.CustomScript, ctx)
 			events = append(events, scriptEvents...)
@@ -196,6 +276,57 @@ func (g *Game) playLeader(a Action) []Event {
 		for uid, p := range g.Players {
 			events = append(events, g.handleDeaths(p, uid)...)
 		}
+	}
+
+	return events
+}
+
+// activateAbility handles activating a creature's ability from the field
+func (g *Game) activateAbility(a Action) []Event {
+	player := g.Players[a.PlayerUID]
+
+	// Find the creature on the field
+	var targetCard *FieldCard
+	for _, fc := range player.Field {
+		if fc.InstanceID == a.InstanceID {
+			targetCard = fc
+			break
+		}
+	}
+
+	if targetCard == nil {
+		return []Event{{Type: "Error", Data: map[string]interface{}{"message": "Card not found on field"}}}
+	}
+
+	card := CardDB[targetCard.CardID]
+	if card.CustomScript == "" {
+		return []Event{{Type: "Error", Data: map[string]interface{}{"message": "This card has no activated ability"}}}
+	}
+
+	// Check if it's a TapAbility (requires the card to be untapped)
+	// The TapAbility function in scripts.go handles the tap check and execution
+	ctx := &ScriptContext{
+		Game:      g,
+		Card:      targetCard,
+		Caster:    player,
+		CasterUID: a.PlayerUID,
+	}
+
+	// If a target is specified, find it and set in context
+	if a.TargetID != 0 {
+		for _, fc := range player.Field {
+			if fc.InstanceID == a.TargetID {
+				ctx.Target = fc
+				break
+			}
+		}
+	}
+
+	events := ExecuteScript(card.CustomScript, ctx)
+
+	// Handle any deaths that occurred
+	for uid, p := range g.Players {
+		events = append(events, g.handleDeaths(p, uid)...)
 	}
 
 	return events

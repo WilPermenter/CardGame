@@ -95,6 +95,8 @@ func (g *Game) HandleAction(a Action) []Event {
 		return g.playInstant(a)
 	case "pass_priority":
 		return g.passPriority(a)
+	case "activate_ability":
+		return g.activateAbility(a)
 	default:
 		return []Event{
 			{
@@ -155,6 +157,10 @@ func (g *Game) endTurn(a Action) []Event {
 		},
 	})
 
+	// Fire OnTurnStart triggers for the new active player
+	triggerEvents := g.FireTriggers("OnTurnStart", g.Turn, "")
+	events = append(events, triggerEvents...)
+
 	// Enter draw phase
 	g.DrawPhase = true
 	events = append(events, Event{
@@ -204,7 +210,7 @@ func (g *Game) drawCardAction(a Action) []Event {
 
 	g.DrawPhase = false
 
-	return []Event{
+	events := []Event{
 		{
 			Type: "CardDrawn",
 			Data: map[string]interface{}{
@@ -216,4 +222,10 @@ func (g *Game) drawCardAction(a Action) []Event {
 			},
 		},
 	}
+
+	// Fire OnDraw triggers
+	triggerEvents := g.FireTriggers("OnDraw", a.PlayerUID, a.Source)
+	events = append(events, triggerEvents...)
+
+	return events
 }

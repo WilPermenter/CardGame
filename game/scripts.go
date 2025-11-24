@@ -3,6 +3,7 @@ package game
 
 import (
 	"fmt"
+	"math/rand"
 	"strconv"
 	"strings"
 )
@@ -13,12 +14,13 @@ import (
 
 // ScriptContext provides all the information needed to execute a script
 type ScriptContext struct {
-	Game       *Game
-	Card       *FieldCard  // The card that triggered the script
-	Caster     *Player     // Player who owns/cast the card
-	CasterUID  string      // UID of the caster
-	Target     *FieldCard  // Target creature (if any)
-	TargetUID  string      // Target player UID (if targeting a player)
+	Game             *Game
+	Card             *FieldCard // The card that triggered the script
+	Caster           *Player    // Player who owns/cast the card
+	CasterUID        string     // UID of the caster
+	Target           *FieldCard // Target creature (if any)
+	TargetUID        string     // Target player UID (if targeting a player)
+	TriggerPlayerUID string     // UID of player who triggered the event (for triggers)
 }
 
 // ExecuteScript parses and executes a card's custom script
@@ -150,6 +152,74 @@ func executeFunction(funcName string, args []string, ctx *ScriptContext) []Event
 		return scriptTapCreature(args, ctx)
 	case "bounce":
 		return scriptBounce(args, ctx)
+	case "ondraw":
+		return scriptOnDraw(args, ctx)
+	case "oncreatureenter":
+		return scriptOnCreatureEnter(args, ctx)
+	case "onplayerdamage":
+		return scriptOnPlayerDamage(args, ctx)
+	case "oncreaturedeath":
+		return scriptOnCreatureDeath(args, ctx)
+	case "onturnstart":
+		return scriptOnTurnStart(args, ctx)
+	case "damageall":
+		return scriptDamageAll(args, ctx)
+	case "buffall":
+		return scriptBuffAll(args, ctx)
+	case "healall":
+		return scriptHealAll(args, ctx)
+	case "destroyall":
+		return scriptDestroyAll(args, ctx)
+	case "lifedrain":
+		return scriptLifeDrain(args, ctx)
+	case "mill":
+		return scriptMill(args, ctx)
+	case "summon":
+		return scriptSummon(args, ctx)
+	case "onattack":
+		return scriptOnAttack(args, ctx)
+	case "countcreatures":
+		return scriptCountCreatures(args, ctx)
+	case "drawcards":
+		return scriptDrawCards(args, ctx)
+	case "reanimate":
+		return scriptReanimate(args, ctx)
+	case "returntohand":
+		return scriptReturnToHand(args, ctx)
+	case "exilegraveyard":
+		return scriptExileGraveyard(args, ctx)
+	case "graveyardcount":
+		return scriptGraveyardCount(args, ctx)
+	case "damagepergraveyard":
+		return scriptDamagePerGraveyard(args, ctx)
+	case "healpergraveyard":
+		return scriptHealPerGraveyard(args, ctx)
+	case "buffpergraveyard":
+		return scriptBuffPerGraveyard(args, ctx)
+	case "summonpergraveyard":
+		return scriptSummonPerGraveyard(args, ctx)
+	case "ondiscard":
+		return scriptOnDiscard(args, ctx)
+	case "selfmill":
+		return scriptSelfMill(args, ctx)
+	case "zombify":
+		return scriptZombify(args, ctx)
+	case "tapability":
+		return scriptTapAbility(args, ctx)
+	case "sacrificerandom":
+		return scriptSacrificeRandom(args, ctx)
+	case "onzombify":
+		return scriptOnZombify(args, ctx)
+	case "buffperzombified":
+		return scriptBuffPerZombified(args, ctx)
+	case "gainmanaperfield":
+		return scriptGainManaPerField(args, ctx)
+	case "damageperhand":
+		return scriptDamagePerHand(args, ctx)
+	case "burnface":
+		return scriptBurnFace(args, ctx)
+	case "doublebuff":
+		return scriptDoubleBuff(args, ctx)
 	default:
 		return []Event{{
 			Type: "ScriptError",
@@ -159,7 +229,7 @@ func executeFunction(funcName string, args []string, ctx *ScriptContext) []Event
 }
 
 // resolvePlayer resolves a player reference string to actual player
-// Accepts: "caster", "opponent", "target", or a player UID
+// Accepts: "caster", "opponent", "target", "triggerplayer", or a player UID
 func resolvePlayer(ref string, ctx *ScriptContext) (*Player, string, error) {
 	ref = strings.ToLower(strings.TrimSpace(ref))
 
@@ -173,6 +243,11 @@ func resolvePlayer(ref string, ctx *ScriptContext) (*Player, string, error) {
 			}
 		}
 		return nil, "", fmt.Errorf("no opponent found")
+	case "triggerplayer":
+		if ctx.TriggerPlayerUID != "" {
+			return ctx.Game.Players[ctx.TriggerPlayerUID], ctx.TriggerPlayerUID, nil
+		}
+		return nil, "", fmt.Errorf("no trigger player specified")
 	case "target":
 		if ctx.TargetUID != "" {
 			return ctx.Game.Players[ctx.TargetUID], ctx.TargetUID, nil
@@ -194,12 +269,14 @@ func resolvePlayer(ref string, ctx *ScriptContext) (*Player, string, error) {
 // SCRIPT FUNCTIONS
 // ============================================================================
 
-// scriptDraw: Draw(count, source, target)
+// scriptDraw: Draw(count) or Draw(count, source, target)
+// Short form: Draw(count) - draws from main deck for caster
+// Full form: Draw(count, source, target)
 // source: "main", "vault"
 // target: "caster", "opponent"
 func scriptDraw(args []string, ctx *ScriptContext) []Event {
-	if len(args) < 3 {
-		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "Draw requires 3 arguments: count, source, target"}}}
+	if len(args) < 1 {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "Draw requires at least 1 argument: count"}}}
 	}
 
 	count, err := strconv.Atoi(args[0])
@@ -207,10 +284,19 @@ func scriptDraw(args []string, ctx *ScriptContext) []Event {
 		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "invalid count: " + args[0]}}}
 	}
 
-	source := strings.ToLower(strings.TrimSpace(args[1]))
-	player, playerUID, err := resolvePlayer(args[2], ctx)
-	if err != nil {
-		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": err.Error()}}}
+	// Default values for short form
+	source := "main"
+	player := ctx.Caster
+	playerUID := ctx.CasterUID
+
+	// If full form provided
+	if len(args) >= 3 {
+		source = strings.ToLower(strings.TrimSpace(args[1]))
+		var err error
+		player, playerUID, err = resolvePlayer(args[2], ctx)
+		if err != nil {
+			return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": err.Error()}}}
+		}
 	}
 
 	var drawn []int
@@ -232,6 +318,145 @@ func scriptDraw(args []string, ctx *ScriptContext) []Event {
 			"cards":        drawn,
 			"mainDeckSize": len(player.DrawPile),
 			"vaultSize":    len(player.VaultPile),
+		},
+	}}
+}
+
+// scriptOnDraw: OnDraw(source, condition, effect)
+// Registers a trigger that fires when a card is drawn
+// source: "main", "vault", or "any" - which draw pile triggers this
+// condition: "trigger:isself" (only owner), "trigger:isopponent" (only opponents), or empty
+// effect: The script to execute, e.g., "Draw(1)"
+func scriptOnDraw(args []string, ctx *ScriptContext) []Event {
+	if len(args) < 3 {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "OnDraw requires 3 arguments: source, condition, effect"}}}
+	}
+
+	if ctx.Card == nil {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "OnDraw requires a source card"}}}
+	}
+
+	// Parse source filter (main, vault, or any)
+	sourceFilter := strings.ToLower(strings.TrimSpace(args[0]))
+	if sourceFilter != "main" && sourceFilter != "vault" && sourceFilter != "any" {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "OnDraw source must be 'main', 'vault', or 'any'"}}}
+	}
+
+	// Parse condition (e.g., "trigger:isself" -> "isself")
+	conditionRaw := strings.ToLower(strings.TrimSpace(args[1]))
+	condition := ""
+	if strings.HasPrefix(conditionRaw, "trigger:") {
+		condition = strings.TrimPrefix(conditionRaw, "trigger:")
+	}
+
+	// The effect is the third argument
+	effect := strings.TrimSpace(args[2])
+
+	// Register the trigger
+	triggerID := ctx.Game.RegisterTrigger(
+		ctx.Card.InstanceID,
+		ctx.CasterUID,
+		"OnDraw",
+		condition,
+		sourceFilter,
+		effect,
+	)
+
+	return []Event{{
+		Type: "TriggerRegistered",
+		Data: map[string]interface{}{
+			"triggerId":    triggerID,
+			"sourceId":     ctx.Card.InstanceID,
+			"eventType":    "OnDraw",
+			"sourceFilter": sourceFilter,
+			"condition":    condition,
+			"owner":        ctx.CasterUID,
+		},
+	}}
+}
+
+// scriptOnCreatureEnter: OnCreatureEnter(condition, effect)
+// Registers a trigger that fires when a creature enters the battlefield
+// condition: "trigger:isself" (only your creatures), "trigger:isopponent" (enemy creatures), or empty
+// effect: The script to execute, e.g., "Draw(1, vault, caster)"
+func scriptOnCreatureEnter(args []string, ctx *ScriptContext) []Event {
+	if len(args) < 2 {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "OnCreatureEnter requires 2 arguments: condition, effect"}}}
+	}
+
+	if ctx.Card == nil {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "OnCreatureEnter requires a source card"}}}
+	}
+
+	// Parse condition
+	conditionRaw := strings.ToLower(strings.TrimSpace(args[0]))
+	condition := ""
+	if strings.HasPrefix(conditionRaw, "trigger:") {
+		condition = strings.TrimPrefix(conditionRaw, "trigger:")
+	}
+
+	effect := strings.TrimSpace(args[1])
+
+	triggerID := ctx.Game.RegisterTrigger(
+		ctx.Card.InstanceID,
+		ctx.CasterUID,
+		"OnCreatureEnter",
+		condition,
+		"", // No source filter for creature enter
+		effect,
+	)
+
+	return []Event{{
+		Type: "TriggerRegistered",
+		Data: map[string]interface{}{
+			"triggerId": triggerID,
+			"sourceId":  ctx.Card.InstanceID,
+			"eventType": "OnCreatureEnter",
+			"condition": condition,
+			"owner":     ctx.CasterUID,
+		},
+	}}
+}
+
+// scriptOnPlayerDamage: OnPlayerDamage(condition, effect)
+// Registers a trigger that fires when a player takes combat damage from your creatures
+// condition: "trigger:isself" (your creatures dealing damage), or empty
+// effect: The script to execute, e.g., "GainMana(red, 1, caster)"
+func scriptOnPlayerDamage(args []string, ctx *ScriptContext) []Event {
+	if len(args) < 2 {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "OnPlayerDamage requires 2 arguments: condition, effect"}}}
+	}
+
+	if ctx.Card == nil {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "OnPlayerDamage requires a source card"}}}
+	}
+
+	// Parse condition
+	conditionRaw := strings.ToLower(strings.TrimSpace(args[0]))
+	condition := ""
+	if strings.HasPrefix(conditionRaw, "trigger:") {
+		condition = strings.TrimPrefix(conditionRaw, "trigger:")
+	}
+
+	effect := strings.TrimSpace(args[1])
+
+	triggerID := ctx.Game.RegisterTrigger(
+		ctx.Card.InstanceID,
+		ctx.CasterUID,
+		"OnPlayerDamage",
+		condition,
+		"", // No source filter
+		effect,
+	)
+
+	return []Event{{
+		Type: "TriggerRegistered",
+		Data: map[string]interface{}{
+			"triggerId": triggerID,
+			"sourceId":  ctx.Card.InstanceID,
+			"eventType": "OnPlayerDamage",
+			"condition": condition,
+			"owner":     ctx.CasterUID,
 		},
 	}}
 }
@@ -727,6 +952,1656 @@ func scriptBounce(args []string, ctx *ScriptContext) []Event {
 			"targetInstanceId": target.InstanceID,
 			"cardId":           target.CardID,
 			"owner":            ownerUID,
+		},
+	}}
+}
+
+// ============================================================================
+// MULTI-TARGET FUNCTIONS
+// ============================================================================
+
+// scriptDamageAll: DamageAll(amount, target_group)
+// target_group: "enemy_creatures", "friendly_creatures", "all_creatures"
+func scriptDamageAll(args []string, ctx *ScriptContext) []Event {
+	if len(args) < 2 {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "DamageAll requires 2 arguments: amount, target_group"}}}
+	}
+
+	amount, err := strconv.Atoi(args[0])
+	if err != nil {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "invalid amount: " + args[0]}}}
+	}
+
+	targetGroup := strings.ToLower(strings.TrimSpace(args[1]))
+	events := []Event{}
+	damaged := []map[string]interface{}{}
+
+	for uid, player := range ctx.Game.Players {
+		isEnemy := uid != ctx.CasterUID
+		isFriendly := uid == ctx.CasterUID
+
+		for _, fc := range player.Field {
+			card := CardDB[fc.CardID]
+			if card.CardType != "Creature" {
+				continue
+			}
+
+			shouldDamage := false
+			switch targetGroup {
+			case "enemy_creatures", "enemies":
+				shouldDamage = isEnemy
+			case "friendly_creatures", "friendlies", "allies":
+				shouldDamage = isFriendly
+			case "all_creatures", "all":
+				shouldDamage = true
+			}
+
+			if shouldDamage {
+				fc.CurrentHealth -= amount
+				damaged = append(damaged, map[string]interface{}{
+					"instanceId": fc.InstanceID,
+					"newHealth":  fc.CurrentHealth,
+					"owner":      uid,
+				})
+			}
+		}
+	}
+
+	events = append(events, Event{
+		Type: "ScriptDamageAll",
+		Data: map[string]interface{}{
+			"amount":      amount,
+			"targetGroup": targetGroup,
+			"damaged":     damaged,
+		},
+	})
+
+	return events
+}
+
+// scriptBuffAll: BuffAll(attack, health, target_group)
+// target_group: "enemy_creatures", "friendly_creatures", "all_creatures"
+func scriptBuffAll(args []string, ctx *ScriptContext) []Event {
+	if len(args) < 3 {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "BuffAll requires 3 arguments: attack, health, target_group"}}}
+	}
+
+	attackMod, err := strconv.Atoi(args[0])
+	if err != nil {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "invalid attack modifier: " + args[0]}}}
+	}
+
+	healthMod, err := strconv.Atoi(args[1])
+	if err != nil {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "invalid health modifier: " + args[1]}}}
+	}
+
+	targetGroup := strings.ToLower(strings.TrimSpace(args[2]))
+	events := []Event{}
+	buffed := []map[string]interface{}{}
+
+	for uid, player := range ctx.Game.Players {
+		isEnemy := uid != ctx.CasterUID
+		isFriendly := uid == ctx.CasterUID
+
+		for _, fc := range player.Field {
+			card := CardDB[fc.CardID]
+			if card.CardType != "Creature" {
+				continue
+			}
+
+			shouldBuff := false
+			switch targetGroup {
+			case "enemy_creatures", "enemies":
+				shouldBuff = isEnemy
+			case "friendly_creatures", "friendlies", "allies":
+				shouldBuff = isFriendly
+			case "all_creatures", "all":
+				shouldBuff = true
+			}
+
+			if shouldBuff {
+				fc.DamageModifier += attackMod
+				fc.HealthModifier += healthMod
+				fc.CurrentHealth += healthMod
+
+				buffed = append(buffed, map[string]interface{}{
+					"instanceId":   fc.InstanceID,
+					"newAttack":    fc.GetAttack(),
+					"newMaxHealth": fc.GetMaxHealth(),
+					"newHealth":    fc.CurrentHealth,
+					"owner":        uid,
+				})
+			}
+		}
+	}
+
+	events = append(events, Event{
+		Type: "ScriptBuffAll",
+		Data: map[string]interface{}{
+			"attackMod":   attackMod,
+			"healthMod":   healthMod,
+			"targetGroup": targetGroup,
+			"buffed":      buffed,
+		},
+	})
+
+	return events
+}
+
+// scriptHealAll: HealAll(amount, target_group)
+// target_group: "enemy_creatures", "friendly_creatures", "all_creatures"
+func scriptHealAll(args []string, ctx *ScriptContext) []Event {
+	if len(args) < 2 {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "HealAll requires 2 arguments: amount, target_group"}}}
+	}
+
+	amount, err := strconv.Atoi(args[0])
+	if err != nil {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "invalid amount: " + args[0]}}}
+	}
+
+	targetGroup := strings.ToLower(strings.TrimSpace(args[1]))
+	events := []Event{}
+	healed := []map[string]interface{}{}
+
+	for uid, player := range ctx.Game.Players {
+		isEnemy := uid != ctx.CasterUID
+		isFriendly := uid == ctx.CasterUID
+
+		for _, fc := range player.Field {
+			card := CardDB[fc.CardID]
+			if card.CardType != "Creature" {
+				continue
+			}
+
+			shouldHeal := false
+			switch targetGroup {
+			case "enemy_creatures", "enemies":
+				shouldHeal = isEnemy
+			case "friendly_creatures", "friendlies", "allies":
+				shouldHeal = isFriendly
+			case "all_creatures", "all":
+				shouldHeal = true
+			}
+
+			if shouldHeal {
+				maxHealth := fc.GetMaxHealth()
+				fc.CurrentHealth += amount
+				if fc.CurrentHealth > maxHealth {
+					fc.CurrentHealth = maxHealth
+				}
+
+				healed = append(healed, map[string]interface{}{
+					"instanceId": fc.InstanceID,
+					"newHealth":  fc.CurrentHealth,
+					"owner":      uid,
+				})
+			}
+		}
+	}
+
+	events = append(events, Event{
+		Type: "ScriptHealAll",
+		Data: map[string]interface{}{
+			"amount":      amount,
+			"targetGroup": targetGroup,
+			"healed":      healed,
+		},
+	})
+
+	return events
+}
+
+// ============================================================================
+// ADDITIONAL TRIGGER FUNCTIONS
+// ============================================================================
+
+// scriptOnCreatureDeath: OnCreatureDeath(condition, effect)
+// Registers a trigger that fires when a creature dies
+// condition: "trigger:isself" (your creatures), "trigger:isopponent" (enemy creatures), or empty
+// effect: The script to execute, e.g., "Draw(1)"
+func scriptOnCreatureDeath(args []string, ctx *ScriptContext) []Event {
+	if len(args) < 2 {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "OnCreatureDeath requires 2 arguments: condition, effect"}}}
+	}
+
+	if ctx.Card == nil {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "OnCreatureDeath requires a source card"}}}
+	}
+
+	// Parse condition
+	conditionRaw := strings.ToLower(strings.TrimSpace(args[0]))
+	condition := ""
+	if strings.HasPrefix(conditionRaw, "trigger:") {
+		condition = strings.TrimPrefix(conditionRaw, "trigger:")
+	}
+
+	effect := strings.TrimSpace(args[1])
+
+	triggerID := ctx.Game.RegisterTrigger(
+		ctx.Card.InstanceID,
+		ctx.CasterUID,
+		"OnCreatureDeath",
+		condition,
+		"", // No source filter
+		effect,
+	)
+
+	return []Event{{
+		Type: "TriggerRegistered",
+		Data: map[string]interface{}{
+			"triggerId": triggerID,
+			"sourceId":  ctx.Card.InstanceID,
+			"eventType": "OnCreatureDeath",
+			"condition": condition,
+			"owner":     ctx.CasterUID,
+		},
+	}}
+}
+
+// scriptOnTurnStart: OnTurnStart(condition, effect)
+// Registers a trigger that fires at the start of a turn
+// condition: "trigger:isself" (your turn), "trigger:isopponent" (opponent's turn), or empty
+// effect: The script to execute, e.g., "Heal(1, caster)"
+func scriptOnTurnStart(args []string, ctx *ScriptContext) []Event {
+	if len(args) < 2 {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "OnTurnStart requires 2 arguments: condition, effect"}}}
+	}
+
+	if ctx.Card == nil {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "OnTurnStart requires a source card"}}}
+	}
+
+	// Parse condition
+	conditionRaw := strings.ToLower(strings.TrimSpace(args[0]))
+	condition := ""
+	if strings.HasPrefix(conditionRaw, "trigger:") {
+		condition = strings.TrimPrefix(conditionRaw, "trigger:")
+	}
+
+	effect := strings.TrimSpace(args[1])
+
+	triggerID := ctx.Game.RegisterTrigger(
+		ctx.Card.InstanceID,
+		ctx.CasterUID,
+		"OnTurnStart",
+		condition,
+		"", // No source filter
+		effect,
+	)
+
+	return []Event{{
+		Type: "TriggerRegistered",
+		Data: map[string]interface{}{
+			"triggerId": triggerID,
+			"sourceId":  ctx.Card.InstanceID,
+			"eventType": "OnTurnStart",
+			"condition": condition,
+			"owner":     ctx.CasterUID,
+		},
+	}}
+}
+
+// scriptOnAttack: OnAttack(condition, effect)
+// Registers a trigger that fires when a creature attacks
+// condition: "trigger:isself" (your creatures attack), or empty for any
+// effect: The script to execute
+func scriptOnAttack(args []string, ctx *ScriptContext) []Event {
+	if len(args) < 2 {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "OnAttack requires 2 arguments: condition, effect"}}}
+	}
+
+	if ctx.Card == nil {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "OnAttack requires a source card"}}}
+	}
+
+	conditionRaw := strings.ToLower(strings.TrimSpace(args[0]))
+	condition := ""
+	if strings.HasPrefix(conditionRaw, "trigger:") {
+		condition = strings.TrimPrefix(conditionRaw, "trigger:")
+	}
+
+	effect := strings.TrimSpace(args[1])
+
+	triggerID := ctx.Game.RegisterTrigger(
+		ctx.Card.InstanceID,
+		ctx.CasterUID,
+		"OnAttack",
+		condition,
+		"",
+		effect,
+	)
+
+	return []Event{{
+		Type: "TriggerRegistered",
+		Data: map[string]interface{}{
+			"triggerId": triggerID,
+			"sourceId":  ctx.Card.InstanceID,
+			"eventType": "OnAttack",
+			"condition": condition,
+			"owner":     ctx.CasterUID,
+		},
+	}}
+}
+
+// scriptDestroyAll: DestroyAll(target_group)
+// Destroys all creatures matching the target group
+func scriptDestroyAll(args []string, ctx *ScriptContext) []Event {
+	if len(args) < 1 {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "DestroyAll requires 1 argument: target_group"}}}
+	}
+
+	targetGroup := strings.ToLower(strings.TrimSpace(args[0]))
+	events := []Event{}
+	destroyed := []map[string]interface{}{}
+
+	for uid, player := range ctx.Game.Players {
+		isEnemy := uid != ctx.CasterUID
+		isFriendly := uid == ctx.CasterUID
+
+		for _, fc := range player.Field {
+			card := CardDB[fc.CardID]
+			if card.CardType != "Creature" {
+				continue
+			}
+
+			shouldDestroy := false
+			switch targetGroup {
+			case "enemy_creatures", "enemies":
+				shouldDestroy = isEnemy
+			case "friendly_creatures", "friendlies", "allies":
+				shouldDestroy = isFriendly
+			case "all_creatures", "all":
+				shouldDestroy = true
+			}
+
+			if shouldDestroy {
+				fc.CurrentHealth = 0
+				destroyed = append(destroyed, map[string]interface{}{
+					"instanceId": fc.InstanceID,
+					"cardId":     fc.CardID,
+					"owner":      uid,
+				})
+			}
+		}
+	}
+
+	events = append(events, Event{
+		Type: "ScriptDestroyAll",
+		Data: map[string]interface{}{
+			"targetGroup": targetGroup,
+			"destroyed":   destroyed,
+		},
+	})
+
+	return events
+}
+
+// scriptLifeDrain: LifeDrain(amount, target)
+// Deal damage to target and heal caster for the same amount
+func scriptLifeDrain(args []string, ctx *ScriptContext) []Event {
+	if len(args) < 2 {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "LifeDrain requires 2 arguments: amount, target"}}}
+	}
+
+	amount, err := strconv.Atoi(args[0])
+	if err != nil {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "invalid amount: " + args[0]}}}
+	}
+
+	targetRef := strings.ToLower(strings.TrimSpace(args[1]))
+	events := []Event{}
+
+	// Deal damage to target
+	if targetRef == "opponent" || targetRef == "enemy" {
+		player, playerUID, err := resolvePlayer(targetRef, ctx)
+		if err != nil {
+			return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": err.Error()}}}
+		}
+		player.Life -= amount
+		ctx.Caster.Life += amount
+
+		events = append(events, Event{
+			Type: "ScriptLifeDrain",
+			Data: map[string]interface{}{
+				"targetType":   "player",
+				"targetPlayer": playerUID,
+				"amount":       amount,
+				"targetLife":   player.Life,
+				"casterLife":   ctx.Caster.Life,
+			},
+		})
+
+		// Check for death
+		if player.Life <= 0 {
+			for uid := range ctx.Game.Players {
+				if uid != playerUID {
+					ctx.Game.Winner = uid
+					events = append(events, Event{
+						Type: "GameOver",
+						Data: map[string]interface{}{"winner": uid},
+					})
+					break
+				}
+			}
+		}
+	} else if targetRef == "target" && ctx.Target != nil {
+		ctx.Target.CurrentHealth -= amount
+		ctx.Caster.Life += amount
+
+		events = append(events, Event{
+			Type: "ScriptLifeDrain",
+			Data: map[string]interface{}{
+				"targetType":       "creature",
+				"targetInstanceId": ctx.Target.InstanceID,
+				"amount":           amount,
+				"targetHealth":     ctx.Target.CurrentHealth,
+				"casterLife":       ctx.Caster.Life,
+			},
+		})
+	}
+
+	return events
+}
+
+// scriptMill: Mill(count, target)
+// Discard cards from the top of target's deck
+func scriptMill(args []string, ctx *ScriptContext) []Event {
+	if len(args) < 2 {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "Mill requires 2 arguments: count, target"}}}
+	}
+
+	count, err := strconv.Atoi(args[0])
+	if err != nil {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "invalid count: " + args[0]}}}
+	}
+
+	player, playerUID, err := resolvePlayer(args[1], ctx)
+	if err != nil {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": err.Error()}}}
+	}
+
+	milled := []int{}
+	for i := 0; i < count && len(player.DrawPile) > 0; i++ {
+		card := player.DrawPile[0]
+		player.DrawPile = player.DrawPile[1:]
+		player.Discard = append(player.Discard, card)
+		milled = append(milled, card)
+	}
+
+	return []Event{{
+		Type: "ScriptMill",
+		Data: map[string]interface{}{
+			"player":       playerUID,
+			"milled":       milled,
+			"mainDeckSize": len(player.DrawPile),
+		},
+	}}
+}
+
+// scriptSummon: Summon(cardId, count)
+// Creates token creatures on the caster's field
+func scriptSummon(args []string, ctx *ScriptContext) []Event {
+	if len(args) < 1 {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "Summon requires at least 1 argument: cardId"}}}
+	}
+
+	cardID, err := strconv.Atoi(args[0])
+	if err != nil {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "invalid cardId: " + args[0]}}}
+	}
+
+	count := 1
+	if len(args) >= 2 {
+		count, err = strconv.Atoi(args[1])
+		if err != nil {
+			count = 1
+		}
+	}
+
+	if _, exists := CardDB[cardID]; !exists {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "card not found: " + args[0]}}}
+	}
+
+	events := []Event{}
+	summoned := []map[string]interface{}{}
+
+	for i := 0; i < count; i++ {
+		fieldCard := ctx.Game.NewFieldCard(cardID, ctx.CasterUID, ctx.CasterUID)
+		fieldCard.Status["Summoned"] = 0 // Tokens don't have summoning sickness
+		fieldCard.CanAttack = true
+		ctx.Caster.Field = append(ctx.Caster.Field, fieldCard)
+
+		summoned = append(summoned, map[string]interface{}{
+			"instanceId": fieldCard.InstanceID,
+			"cardId":     cardID,
+		})
+	}
+
+	events = append(events, Event{
+		Type: "ScriptSummon",
+		Data: map[string]interface{}{
+			"player":   ctx.CasterUID,
+			"cardId":   cardID,
+			"count":    count,
+			"summoned": summoned,
+		},
+	})
+
+	return events
+}
+
+// scriptCountCreatures: CountCreatures(target_group)
+// Returns count of creatures (used internally for dynamic values)
+func scriptCountCreatures(args []string, ctx *ScriptContext) []Event {
+	if len(args) < 1 {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "CountCreatures requires 1 argument: target_group"}}}
+	}
+
+	targetGroup := strings.ToLower(strings.TrimSpace(args[0]))
+	count := 0
+
+	for uid, player := range ctx.Game.Players {
+		isEnemy := uid != ctx.CasterUID
+		isFriendly := uid == ctx.CasterUID
+
+		for _, fc := range player.Field {
+			card := CardDB[fc.CardID]
+			if card.CardType != "Creature" {
+				continue
+			}
+
+			shouldCount := false
+			switch targetGroup {
+			case "enemy_creatures", "enemies":
+				shouldCount = isEnemy
+			case "friendly_creatures", "friendlies", "allies":
+				shouldCount = isFriendly
+			case "all_creatures", "all":
+				shouldCount = true
+			}
+
+			if shouldCount {
+				count++
+			}
+		}
+	}
+
+	return []Event{{
+		Type: "ScriptCount",
+		Data: map[string]interface{}{
+			"targetGroup": targetGroup,
+			"count":       count,
+		},
+	}}
+}
+
+// scriptDrawCards: DrawCards(count_per_creature, target_group, source, player)
+// Draw cards based on creature count - e.g., draw 1 card per friendly creature
+func scriptDrawCards(args []string, ctx *ScriptContext) []Event {
+	if len(args) < 4 {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "DrawCards requires 4 arguments: count_per, target_group, source, player"}}}
+	}
+
+	countPer, err := strconv.Atoi(args[0])
+	if err != nil {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "invalid count: " + args[0]}}}
+	}
+
+	targetGroup := strings.ToLower(strings.TrimSpace(args[1]))
+	source := strings.ToLower(strings.TrimSpace(args[2]))
+
+	player, playerUID, err := resolvePlayer(args[3], ctx)
+	if err != nil {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": err.Error()}}}
+	}
+
+	// Count creatures
+	creatureCount := 0
+	for uid, p := range ctx.Game.Players {
+		isEnemy := uid != ctx.CasterUID
+		isFriendly := uid == ctx.CasterUID
+
+		for _, fc := range p.Field {
+			card := CardDB[fc.CardID]
+			if card.CardType != "Creature" {
+				continue
+			}
+
+			shouldCount := false
+			switch targetGroup {
+			case "enemy_creatures", "enemies":
+				shouldCount = isEnemy
+			case "friendly_creatures", "friendlies", "allies":
+				shouldCount = isFriendly
+			case "all_creatures", "all":
+				shouldCount = true
+			}
+
+			if shouldCount {
+				creatureCount++
+			}
+		}
+	}
+
+	totalDraw := countPer * creatureCount
+	var drawn []int
+
+	switch source {
+	case "main", "deck":
+		drawn = player.DrawCards(totalDraw)
+	case "vault", "land":
+		drawn = player.DrawFromVault(totalDraw)
+	default:
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "invalid source: " + source}}}
+	}
+
+	return []Event{{
+		Type: "ScriptDraw",
+		Data: map[string]interface{}{
+			"player":        playerUID,
+			"source":        source,
+			"count":         len(drawn),
+			"cards":         drawn,
+			"creatureCount": creatureCount,
+			"mainDeckSize":  len(player.DrawPile),
+			"vaultSize":     len(player.VaultPile),
+		},
+	}}
+}
+
+// ============================================================================
+// GRAVEYARD FUNCTIONS
+// ============================================================================
+
+// scriptReanimate: Reanimate(card_type, player)
+// Puts the top creature from graveyard directly onto the battlefield
+// card_type: "creature", "any"
+// player: whose graveyard to reanimate from (usually "caster")
+func scriptReanimate(args []string, ctx *ScriptContext) []Event {
+	if len(args) < 2 {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "Reanimate requires 2 arguments: card_type, player"}}}
+	}
+
+	cardType := strings.ToLower(strings.TrimSpace(args[0]))
+	player, playerUID, err := resolvePlayer(args[1], ctx)
+	if err != nil {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": err.Error()}}}
+	}
+
+	// Find a matching card in the graveyard (search from end - most recent)
+	var foundIdx int = -1
+	var foundCardID int
+	for i := len(player.Discard) - 1; i >= 0; i-- {
+		cardID := player.Discard[i]
+		card := CardDB[cardID]
+		if cardType == "any" || strings.ToLower(card.CardType) == cardType {
+			foundIdx = i
+			foundCardID = cardID
+			break
+		}
+	}
+
+	if foundIdx == -1 {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "No matching card in graveyard"}}}
+	}
+
+	// Remove from graveyard
+	player.Discard = append(player.Discard[:foundIdx], player.Discard[foundIdx+1:]...)
+
+	// Put onto battlefield
+	fieldCard := ctx.Game.NewFieldCard(foundCardID, playerUID, ctx.CasterUID)
+	fieldCard.Status["Summoned"] = 0 // No summoning sickness for reanimated creatures
+	fieldCard.CanAttack = true
+	player.Field = append(player.Field, fieldCard)
+
+	return []Event{{
+		Type: "ScriptReanimate",
+		Data: map[string]interface{}{
+			"player":        playerUID,
+			"cardId":        foundCardID,
+			"instanceId":    fieldCard.InstanceID,
+			"graveyardSize": len(player.Discard),
+		},
+	}}
+}
+
+// scriptReturnToHand: ReturnToHand(count, card_type, player)
+// Returns cards from graveyard to hand
+func scriptReturnToHand(args []string, ctx *ScriptContext) []Event {
+	if len(args) < 3 {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "ReturnToHand requires 3 arguments: count, card_type, player"}}}
+	}
+
+	count, err := strconv.Atoi(args[0])
+	if err != nil {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "invalid count: " + args[0]}}}
+	}
+
+	cardType := strings.ToLower(strings.TrimSpace(args[1]))
+	player, playerUID, err := resolvePlayer(args[2], ctx)
+	if err != nil {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": err.Error()}}}
+	}
+
+	returned := []int{}
+	for i := 0; i < count; i++ {
+		// Find a matching card (search from end)
+		foundIdx := -1
+		for j := len(player.Discard) - 1; j >= 0; j-- {
+			cardID := player.Discard[j]
+			card := CardDB[cardID]
+			if cardType == "any" || strings.ToLower(card.CardType) == cardType {
+				foundIdx = j
+				break
+			}
+		}
+
+		if foundIdx == -1 {
+			break // No more matching cards
+		}
+
+		cardID := player.Discard[foundIdx]
+		player.Discard = append(player.Discard[:foundIdx], player.Discard[foundIdx+1:]...)
+		player.Hand = append(player.Hand, cardID)
+		returned = append(returned, cardID)
+	}
+
+	return []Event{{
+		Type: "ScriptReturnToHand",
+		Data: map[string]interface{}{
+			"player":        playerUID,
+			"returned":      returned,
+			"count":         len(returned),
+			"graveyardSize": len(player.Discard),
+			"handSize":      len(player.Hand),
+		},
+	}}
+}
+
+// scriptExileGraveyard: ExileGraveyard(count, player)
+// Removes cards from graveyard permanently (they're gone)
+func scriptExileGraveyard(args []string, ctx *ScriptContext) []Event {
+	if len(args) < 2 {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "ExileGraveyard requires 2 arguments: count, player"}}}
+	}
+
+	countStr := strings.ToLower(strings.TrimSpace(args[0]))
+	player, playerUID, err := resolvePlayer(args[1], ctx)
+	if err != nil {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": err.Error()}}}
+	}
+
+	var count int
+	if countStr == "all" {
+		count = len(player.Discard)
+	} else {
+		count, err = strconv.Atoi(countStr)
+		if err != nil {
+			return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "invalid count: " + args[0]}}}
+		}
+	}
+
+	exiled := []int{}
+	for i := 0; i < count && len(player.Discard) > 0; i++ {
+		// Remove from end (most recent)
+		cardID := player.Discard[len(player.Discard)-1]
+		player.Discard = player.Discard[:len(player.Discard)-1]
+		exiled = append(exiled, cardID)
+	}
+
+	return []Event{{
+		Type: "ScriptExileGraveyard",
+		Data: map[string]interface{}{
+			"player":        playerUID,
+			"exiled":        exiled,
+			"count":         len(exiled),
+			"graveyardSize": len(player.Discard),
+		},
+	}}
+}
+
+// scriptGraveyardCount: GraveyardCount(player)
+// Returns the count of cards in a player's graveyard
+func scriptGraveyardCount(args []string, ctx *ScriptContext) []Event {
+	if len(args) < 1 {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "GraveyardCount requires 1 argument: player"}}}
+	}
+
+	player, playerUID, err := resolvePlayer(args[0], ctx)
+	if err != nil {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": err.Error()}}}
+	}
+
+	return []Event{{
+		Type: "ScriptGraveyardCount",
+		Data: map[string]interface{}{
+			"player": playerUID,
+			"count":  len(player.Discard),
+		},
+	}}
+}
+
+// scriptDamagePerGraveyard: DamagePerGraveyard(per_card, graveyard_owner, damage_target)
+// Deal damage equal to graveyard size
+func scriptDamagePerGraveyard(args []string, ctx *ScriptContext) []Event {
+	if len(args) < 3 {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "DamagePerGraveyard requires 3 arguments: per_card, graveyard_owner, damage_target"}}}
+	}
+
+	perCard, err := strconv.Atoi(args[0])
+	if err != nil {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "invalid per_card: " + args[0]}}}
+	}
+
+	graveyardOwner, _, err := resolvePlayer(args[1], ctx)
+	if err != nil {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": err.Error()}}}
+	}
+
+	targetRef := strings.ToLower(strings.TrimSpace(args[2]))
+	graveyardSize := len(graveyardOwner.Discard)
+	totalDamage := perCard * graveyardSize
+
+	if totalDamage <= 0 {
+		return []Event{{Type: "ScriptDamagePerGraveyard", Data: map[string]interface{}{"damage": 0, "graveyardSize": graveyardSize}}}
+	}
+
+	events := []Event{}
+
+	if targetRef == "opponent" || targetRef == "enemy" {
+		target, targetUID, _ := resolvePlayer(targetRef, ctx)
+		target.Life -= totalDamage
+
+		events = append(events, Event{
+			Type: "ScriptDamagePerGraveyard",
+			Data: map[string]interface{}{
+				"targetType":    "player",
+				"targetPlayer":  targetUID,
+				"damage":        totalDamage,
+				"graveyardSize": graveyardSize,
+				"newLife":       target.Life,
+			},
+		})
+
+		if target.Life <= 0 {
+			for uid := range ctx.Game.Players {
+				if uid != targetUID {
+					ctx.Game.Winner = uid
+					events = append(events, Event{Type: "GameOver", Data: map[string]interface{}{"winner": uid}})
+					break
+				}
+			}
+		}
+	}
+
+	return events
+}
+
+// scriptHealPerGraveyard: HealPerGraveyard(per_card, graveyard_owner, heal_target)
+// Heal based on graveyard size
+func scriptHealPerGraveyard(args []string, ctx *ScriptContext) []Event {
+	if len(args) < 3 {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "HealPerGraveyard requires 3 arguments: per_card, graveyard_owner, heal_target"}}}
+	}
+
+	perCard, err := strconv.Atoi(args[0])
+	if err != nil {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "invalid per_card: " + args[0]}}}
+	}
+
+	graveyardOwner, _, err := resolvePlayer(args[1], ctx)
+	if err != nil {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": err.Error()}}}
+	}
+
+	target, targetUID, err := resolvePlayer(args[2], ctx)
+	if err != nil {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": err.Error()}}}
+	}
+
+	graveyardSize := len(graveyardOwner.Discard)
+	totalHeal := perCard * graveyardSize
+
+	target.Life += totalHeal
+
+	return []Event{{
+		Type: "ScriptHealPerGraveyard",
+		Data: map[string]interface{}{
+			"player":        targetUID,
+			"heal":          totalHeal,
+			"graveyardSize": graveyardSize,
+			"newLife":       target.Life,
+		},
+	}}
+}
+
+// scriptBuffPerGraveyard: BuffPerGraveyard(attack_per, health_per, graveyard_owner, target)
+// Buff a creature based on graveyard size
+func scriptBuffPerGraveyard(args []string, ctx *ScriptContext) []Event {
+	if len(args) < 4 {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "BuffPerGraveyard requires 4 arguments: attack_per, health_per, graveyard_owner, target"}}}
+	}
+
+	attackPer, err := strconv.Atoi(args[0])
+	if err != nil {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "invalid attack_per: " + args[0]}}}
+	}
+
+	healthPer, err := strconv.Atoi(args[1])
+	if err != nil {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "invalid health_per: " + args[1]}}}
+	}
+
+	graveyardOwner, _, err := resolvePlayer(args[2], ctx)
+	if err != nil {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": err.Error()}}}
+	}
+
+	targetRef := strings.ToLower(strings.TrimSpace(args[3]))
+	graveyardSize := len(graveyardOwner.Discard)
+
+	totalAttack := attackPer * graveyardSize
+	totalHealth := healthPer * graveyardSize
+
+	var target *FieldCard
+	if targetRef == "self" && ctx.Card != nil {
+		target = ctx.Card
+	} else if targetRef == "target" && ctx.Target != nil {
+		target = ctx.Target
+	}
+
+	if target == nil {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "invalid target: " + targetRef}}}
+	}
+
+	target.DamageModifier += totalAttack
+	target.HealthModifier += totalHealth
+	target.CurrentHealth += totalHealth
+
+	return []Event{{
+		Type: "ScriptBuffPerGraveyard",
+		Data: map[string]interface{}{
+			"targetInstanceId": target.InstanceID,
+			"attackBuff":       totalAttack,
+			"healthBuff":       totalHealth,
+			"graveyardSize":    graveyardSize,
+			"newAttack":        target.GetAttack(),
+			"newHealth":        target.CurrentHealth,
+		},
+	}}
+}
+
+// scriptSummonPerGraveyard: SummonPerGraveyard(cardId, per_cards, graveyard_owner)
+// Summon tokens based on graveyard size (1 token per X cards)
+func scriptSummonPerGraveyard(args []string, ctx *ScriptContext) []Event {
+	if len(args) < 3 {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "SummonPerGraveyard requires 3 arguments: cardId, per_cards, graveyard_owner"}}}
+	}
+
+	cardID, err := strconv.Atoi(args[0])
+	if err != nil {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "invalid cardId: " + args[0]}}}
+	}
+
+	perCards, err := strconv.Atoi(args[1])
+	if err != nil || perCards <= 0 {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "invalid per_cards: " + args[1]}}}
+	}
+
+	graveyardOwner, _, err := resolvePlayer(args[2], ctx)
+	if err != nil {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": err.Error()}}}
+	}
+
+	if _, exists := CardDB[cardID]; !exists {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "card not found: " + args[0]}}}
+	}
+
+	graveyardSize := len(graveyardOwner.Discard)
+	tokenCount := graveyardSize / perCards
+
+	if tokenCount <= 0 {
+		return []Event{{Type: "ScriptSummonPerGraveyard", Data: map[string]interface{}{"count": 0, "graveyardSize": graveyardSize}}}
+	}
+
+	summoned := []map[string]interface{}{}
+	for i := 0; i < tokenCount; i++ {
+		fieldCard := ctx.Game.NewFieldCard(cardID, ctx.CasterUID, ctx.CasterUID)
+		fieldCard.Status["Summoned"] = 0
+		fieldCard.CanAttack = true
+		ctx.Caster.Field = append(ctx.Caster.Field, fieldCard)
+
+		summoned = append(summoned, map[string]interface{}{
+			"instanceId": fieldCard.InstanceID,
+			"cardId":     cardID,
+		})
+	}
+
+	return []Event{{
+		Type: "ScriptSummonPerGraveyard",
+		Data: map[string]interface{}{
+			"player":        ctx.CasterUID,
+			"cardId":        cardID,
+			"count":         tokenCount,
+			"graveyardSize": graveyardSize,
+			"summoned":      summoned,
+		},
+	}}
+}
+
+// scriptOnDiscard: OnDiscard(condition, effect)
+// Registers a trigger that fires when cards enter the graveyard
+func scriptOnDiscard(args []string, ctx *ScriptContext) []Event {
+	if len(args) < 2 {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "OnDiscard requires 2 arguments: condition, effect"}}}
+	}
+
+	if ctx.Card == nil {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "OnDiscard requires a source card"}}}
+	}
+
+	conditionRaw := strings.ToLower(strings.TrimSpace(args[0]))
+	condition := ""
+	if strings.HasPrefix(conditionRaw, "trigger:") {
+		condition = strings.TrimPrefix(conditionRaw, "trigger:")
+	}
+
+	effect := strings.TrimSpace(args[1])
+
+	triggerID := ctx.Game.RegisterTrigger(
+		ctx.Card.InstanceID,
+		ctx.CasterUID,
+		"OnDiscard",
+		condition,
+		"",
+		effect,
+	)
+
+	return []Event{{
+		Type: "TriggerRegistered",
+		Data: map[string]interface{}{
+			"triggerId": triggerID,
+			"sourceId":  ctx.Card.InstanceID,
+			"eventType": "OnDiscard",
+			"condition": condition,
+			"owner":     ctx.CasterUID,
+		},
+	}}
+}
+
+// scriptSelfMill: SelfMill(count)
+// Mill yourself (put cards from your deck into your graveyard)
+func scriptSelfMill(args []string, ctx *ScriptContext) []Event {
+	if len(args) < 1 {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "SelfMill requires 1 argument: count"}}}
+	}
+
+	count, err := strconv.Atoi(args[0])
+	if err != nil {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "invalid count: " + args[0]}}}
+	}
+
+	milled := []int{}
+	for i := 0; i < count && len(ctx.Caster.DrawPile) > 0; i++ {
+		card := ctx.Caster.DrawPile[0]
+		ctx.Caster.DrawPile = ctx.Caster.DrawPile[1:]
+		ctx.Caster.Discard = append(ctx.Caster.Discard, card)
+		milled = append(milled, card)
+	}
+
+	events := []Event{{
+		Type: "ScriptSelfMill",
+		Data: map[string]interface{}{
+			"player":        ctx.CasterUID,
+			"milled":        milled,
+			"count":         len(milled),
+			"mainDeckSize":  len(ctx.Caster.DrawPile),
+			"graveyardSize": len(ctx.Caster.Discard),
+		},
+	}}
+
+	// Fire OnDiscard triggers
+	triggerEvents := ctx.Game.FireTriggers("OnDiscard", ctx.CasterUID, "")
+	events = append(events, triggerEvents...)
+
+	return events
+}
+
+// ============================================================================
+// ZOMBIFY SYSTEM
+// ============================================================================
+
+// scriptZombify: Zombify(target)
+// Sacrifice a friendly creature and create a "zombified" copy with half health
+// target: "target" (selected creature), "random" (random friendly), or instance ID
+func scriptZombify(args []string, ctx *ScriptContext) []Event {
+	if len(args) < 1 {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "Zombify requires 1 argument: target"}}}
+	}
+
+	targetRef := strings.ToLower(strings.TrimSpace(args[0]))
+	var target *FieldCard
+	var targetIdx int = -1
+
+	if targetRef == "target" && ctx.Target != nil {
+		// Verify target is friendly
+		if ctx.Target.Owner != ctx.CasterUID {
+			return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "Can only zombify your own creatures"}}}
+		}
+		target = ctx.Target
+		for i, fc := range ctx.Caster.Field {
+			if fc.InstanceID == target.InstanceID {
+				targetIdx = i
+				break
+			}
+		}
+	} else if targetRef == "random" {
+		// Find random friendly creature (not the source card if it exists)
+		validTargets := []int{}
+		for i, fc := range ctx.Caster.Field {
+			card := CardDB[fc.CardID]
+			if card.CardType == "Creature" && (ctx.Card == nil || fc.InstanceID != ctx.Card.InstanceID) {
+				validTargets = append(validTargets, i)
+			}
+		}
+		if len(validTargets) == 0 {
+			return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "No valid creatures to zombify"}}}
+		}
+		targetIdx = validTargets[rand.Intn(len(validTargets))]
+		target = ctx.Caster.Field[targetIdx]
+	} else {
+		// Try as instance ID
+		instanceID, err := strconv.Atoi(targetRef)
+		if err == nil {
+			for i, fc := range ctx.Caster.Field {
+				if fc.InstanceID == instanceID {
+					target = fc
+					targetIdx = i
+					break
+				}
+			}
+		}
+	}
+
+	if target == nil || targetIdx == -1 {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "Invalid zombify target"}}}
+	}
+
+	// Get original card stats
+	originalCard := CardDB[target.CardID]
+	if originalCard.CardType != "Creature" {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "Can only zombify creatures"}}}
+	}
+
+	originalAttack := target.GetAttack()
+	originalMaxHealth := target.GetMaxHealth()
+	zombieHealth := (originalMaxHealth + 1) / 2 // Ceiling division
+
+	// Remove original from field (sacrifice)
+	ctx.Caster.Field = append(ctx.Caster.Field[:targetIdx], ctx.Caster.Field[targetIdx+1:]...)
+	ctx.Caster.Discard = append(ctx.Caster.Discard, target.CardID)
+
+	// Create zombified copy
+	zombieCard := ctx.Game.NewFieldCard(target.CardID, ctx.CasterUID, ctx.CasterUID)
+	zombieCard.Status["Summoned"] = 0 // No summoning sickness
+	zombieCard.CanAttack = true
+	zombieCard.Status["Zombified"] = 1 // Mark as zombified
+
+	// Apply the attack modifier to match original (in case it was buffed)
+	zombieCard.DamageModifier = originalAttack - originalCard.Attack
+
+	// Set health to half of original max
+	healthDiff := zombieHealth - originalCard.Defense
+	zombieCard.HealthModifier = healthDiff
+	zombieCard.CurrentHealth = zombieHealth
+
+	ctx.Caster.Field = append(ctx.Caster.Field, zombieCard)
+
+	events := []Event{{
+		Type: "ScriptZombify",
+		Data: map[string]interface{}{
+			"player":            ctx.CasterUID,
+			"sacrificedId":      target.InstanceID,
+			"cardId":            target.CardID,
+			"newInstanceId":     zombieCard.InstanceID,
+			"originalHealth":    originalMaxHealth,
+			"zombieHealth":      zombieHealth,
+			"attack":            originalAttack,
+		},
+	}}
+
+	// Fire OnZombify triggers
+	triggerEvents := ctx.Game.FireTriggers("OnZombify", ctx.CasterUID, "")
+	events = append(events, triggerEvents...)
+
+	// Fire OnCreatureDeath triggers (creature was sacrificed)
+	deathEvents := ctx.Game.FireTriggers("OnCreatureDeath", ctx.CasterUID, "")
+	events = append(events, deathEvents...)
+
+	// Fire OnCreatureEnter triggers (new zombie entered)
+	enterEvents := ctx.Game.FireTriggers("OnCreatureEnter", ctx.CasterUID, "")
+	events = append(events, enterEvents...)
+
+	return events
+}
+
+// scriptTapAbility: TapAbility(effect)
+// Executes an effect only if the source card is untapped, then taps it
+func scriptTapAbility(args []string, ctx *ScriptContext) []Event {
+	if len(args) < 1 {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "TapAbility requires 1 argument: effect"}}}
+	}
+
+	if ctx.Card == nil {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "TapAbility requires a source card"}}}
+	}
+
+	// Check if card is already tapped
+	if ctx.Card.IsTapped() {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "Card is already tapped"}}}
+	}
+
+	// Tap the card
+	ctx.Card.SetTapped(true)
+
+	events := []Event{{
+		Type: "CardTapped",
+		Data: map[string]interface{}{
+			"player":     ctx.CasterUID,
+			"instanceId": ctx.Card.InstanceID,
+			"reason":     "TapAbility",
+		},
+	}}
+
+	// Execute the effect
+	effect := strings.TrimSpace(args[0])
+	effectEvents := ExecuteScript(effect, ctx)
+	events = append(events, effectEvents...)
+
+	return events
+}
+
+// scriptSacrificeRandom: SacrificeRandom(target_group)
+// Sacrifice a random creature from the specified group
+func scriptSacrificeRandom(args []string, ctx *ScriptContext) []Event {
+	if len(args) < 1 {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "SacrificeRandom requires 1 argument: target_group"}}}
+	}
+
+	targetGroup := strings.ToLower(strings.TrimSpace(args[0]))
+
+	var validTargets []*FieldCard
+	var validOwners []string
+	var validIndices []int
+
+	for uid, player := range ctx.Game.Players {
+		isEnemy := uid != ctx.CasterUID
+		isFriendly := uid == ctx.CasterUID
+
+		for i, fc := range player.Field {
+			card := CardDB[fc.CardID]
+			if card.CardType != "Creature" {
+				continue
+			}
+
+			shouldInclude := false
+			switch targetGroup {
+			case "friendly", "friendly_creatures":
+				shouldInclude = isFriendly
+			case "enemy", "enemy_creatures":
+				shouldInclude = isEnemy
+			case "all", "all_creatures":
+				shouldInclude = true
+			}
+
+			if shouldInclude {
+				validTargets = append(validTargets, fc)
+				validOwners = append(validOwners, uid)
+				validIndices = append(validIndices, i)
+			}
+		}
+	}
+
+	if len(validTargets) == 0 {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "No valid creatures to sacrifice"}}}
+	}
+
+	// Pick random target
+	idx := rand.Intn(len(validTargets))
+	target := validTargets[idx]
+	ownerUID := validOwners[idx]
+	owner := ctx.Game.Players[ownerUID]
+
+	// Remove from field
+	newField := []*FieldCard{}
+	for _, fc := range owner.Field {
+		if fc.InstanceID != target.InstanceID {
+			newField = append(newField, fc)
+		}
+	}
+	owner.Field = newField
+	owner.Discard = append(owner.Discard, target.CardID)
+
+	events := []Event{{
+		Type: "ScriptSacrifice",
+		Data: map[string]interface{}{
+			"player":     ownerUID,
+			"instanceId": target.InstanceID,
+			"cardId":     target.CardID,
+		},
+	}}
+
+	// Fire death triggers
+	deathEvents := ctx.Game.FireTriggers("OnCreatureDeath", ownerUID, "")
+	events = append(events, deathEvents...)
+
+	return events
+}
+
+// scriptOnZombify: OnZombify(condition, effect)
+// Registers a trigger that fires when a creature is zombified
+func scriptOnZombify(args []string, ctx *ScriptContext) []Event {
+	if len(args) < 2 {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "OnZombify requires 2 arguments: condition, effect"}}}
+	}
+
+	if ctx.Card == nil {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "OnZombify requires a source card"}}}
+	}
+
+	conditionRaw := strings.ToLower(strings.TrimSpace(args[0]))
+	condition := ""
+	if strings.HasPrefix(conditionRaw, "trigger:") {
+		condition = strings.TrimPrefix(conditionRaw, "trigger:")
+	}
+
+	effect := strings.TrimSpace(args[1])
+
+	triggerID := ctx.Game.RegisterTrigger(
+		ctx.Card.InstanceID,
+		ctx.CasterUID,
+		"OnZombify",
+		condition,
+		"",
+		effect,
+	)
+
+	return []Event{{
+		Type: "TriggerRegistered",
+		Data: map[string]interface{}{
+			"triggerId": triggerID,
+			"sourceId":  ctx.Card.InstanceID,
+			"eventType": "OnZombify",
+			"condition": condition,
+			"owner":     ctx.CasterUID,
+		},
+	}}
+}
+
+// scriptBuffPerZombified: BuffPerZombified(attack_per, health_per, target)
+// Buff a creature based on number of zombified creatures you control
+func scriptBuffPerZombified(args []string, ctx *ScriptContext) []Event {
+	if len(args) < 3 {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "BuffPerZombified requires 3 arguments: attack_per, health_per, target"}}}
+	}
+
+	attackPer, err := strconv.Atoi(args[0])
+	if err != nil {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "invalid attack_per: " + args[0]}}}
+	}
+
+	healthPer, err := strconv.Atoi(args[1])
+	if err != nil {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "invalid health_per: " + args[1]}}}
+	}
+
+	targetRef := strings.ToLower(strings.TrimSpace(args[2]))
+
+	// Count zombified creatures
+	zombifiedCount := 0
+	for _, fc := range ctx.Caster.Field {
+		if fc.Status != nil && fc.Status["Zombified"] > 0 {
+			zombifiedCount++
+		}
+	}
+
+	totalAttack := attackPer * zombifiedCount
+	totalHealth := healthPer * zombifiedCount
+
+	var target *FieldCard
+	if targetRef == "self" && ctx.Card != nil {
+		target = ctx.Card
+	} else if targetRef == "target" && ctx.Target != nil {
+		target = ctx.Target
+	}
+
+	if target == nil {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "invalid target: " + targetRef}}}
+	}
+
+	target.DamageModifier += totalAttack
+	target.HealthModifier += totalHealth
+	target.CurrentHealth += totalHealth
+
+	return []Event{{
+		Type: "ScriptBuffPerZombified",
+		Data: map[string]interface{}{
+			"targetInstanceId": target.InstanceID,
+			"attackBuff":       totalAttack,
+			"healthBuff":       totalHealth,
+			"zombifiedCount":   zombifiedCount,
+			"newAttack":        target.GetAttack(),
+			"newHealth":        target.CurrentHealth,
+		},
+	}}
+}
+
+// ============================================================================
+// ARCHETYPE FUNCTIONS
+// ============================================================================
+
+// scriptGainManaPerField: GainManaPerField(color, per_creature, target_group)
+// Gain mana based on creatures on field (for ramp decks)
+func scriptGainManaPerField(args []string, ctx *ScriptContext) []Event {
+	if len(args) < 3 {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "GainManaPerField requires 3 arguments: color, per_creature, target_group"}}}
+	}
+
+	color := strings.ToLower(strings.TrimSpace(args[0]))
+	perCreature, err := strconv.Atoi(args[1])
+	if err != nil {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "invalid per_creature: " + args[1]}}}
+	}
+	targetGroup := strings.ToLower(strings.TrimSpace(args[2]))
+
+	// Count creatures
+	count := 0
+	for uid, player := range ctx.Game.Players {
+		isFriendly := uid == ctx.CasterUID
+
+		for _, fc := range player.Field {
+			card := CardDB[fc.CardID]
+			if card.CardType != "Creature" {
+				continue
+			}
+
+			shouldCount := false
+			switch targetGroup {
+			case "friendly", "friendly_creatures":
+				shouldCount = isFriendly
+			case "all", "all_creatures":
+				shouldCount = true
+			}
+
+			if shouldCount {
+				count++
+			}
+		}
+	}
+
+	totalMana := perCreature * count
+	manaGained := ManaCost{}
+
+	switch color {
+	case "white":
+		manaGained.White = totalMana
+		ctx.Caster.ManaPool.White += totalMana
+	case "blue":
+		manaGained.Blue = totalMana
+		ctx.Caster.ManaPool.Blue += totalMana
+	case "black":
+		manaGained.Black = totalMana
+		ctx.Caster.ManaPool.Black += totalMana
+	case "red":
+		manaGained.Red = totalMana
+		ctx.Caster.ManaPool.Red += totalMana
+	case "green":
+		manaGained.Green = totalMana
+		ctx.Caster.ManaPool.Green += totalMana
+	case "colorless":
+		manaGained.Colorless = totalMana
+		ctx.Caster.ManaPool.Colorless += totalMana
+	}
+
+	return []Event{{
+		Type: "ScriptGainManaPerField",
+		Data: map[string]interface{}{
+			"player":        ctx.CasterUID,
+			"color":         color,
+			"amount":        totalMana,
+			"creatureCount": count,
+			"manaPool":      ctx.Caster.ManaPool,
+		},
+	}}
+}
+
+// scriptDamagePerHand: DamagePerHand(per_card, target)
+// Deal damage based on hand size (for burn/control decks)
+func scriptDamagePerHand(args []string, ctx *ScriptContext) []Event {
+	if len(args) < 2 {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "DamagePerHand requires 2 arguments: per_card, target"}}}
+	}
+
+	perCard, err := strconv.Atoi(args[0])
+	if err != nil {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "invalid per_card: " + args[0]}}}
+	}
+
+	target, targetUID, err := resolvePlayer(args[1], ctx)
+	if err != nil {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": err.Error()}}}
+	}
+
+	handSize := len(ctx.Caster.Hand)
+	totalDamage := perCard * handSize
+
+	target.Life -= totalDamage
+
+	events := []Event{{
+		Type: "ScriptDamagePerHand",
+		Data: map[string]interface{}{
+			"target":   targetUID,
+			"damage":   totalDamage,
+			"handSize": handSize,
+			"newLife":  target.Life,
+		},
+	}}
+
+	if target.Life <= 0 {
+		for uid := range ctx.Game.Players {
+			if uid != targetUID {
+				ctx.Game.Winner = uid
+				events = append(events, Event{Type: "GameOver", Data: map[string]interface{}{"winner": uid}})
+				break
+			}
+		}
+	}
+
+	return events
+}
+
+// scriptBurnFace: BurnFace(amount)
+// Direct damage to opponent (shorthand for burn decks)
+func scriptBurnFace(args []string, ctx *ScriptContext) []Event {
+	if len(args) < 1 {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "BurnFace requires 1 argument: amount"}}}
+	}
+
+	amount, err := strconv.Atoi(args[0])
+	if err != nil {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "invalid amount: " + args[0]}}}
+	}
+
+	var opponent *Player
+	var opponentUID string
+	for uid, p := range ctx.Game.Players {
+		if uid != ctx.CasterUID {
+			opponent = p
+			opponentUID = uid
+			break
+		}
+	}
+
+	if opponent == nil {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "no opponent found"}}}
+	}
+
+	opponent.Life -= amount
+
+	events := []Event{{
+		Type: "ScriptBurnFace",
+		Data: map[string]interface{}{
+			"target":  opponentUID,
+			"damage":  amount,
+			"newLife": opponent.Life,
+		},
+	}}
+
+	if opponent.Life <= 0 {
+		ctx.Game.Winner = ctx.CasterUID
+		events = append(events, Event{Type: "GameOver", Data: map[string]interface{}{"winner": ctx.CasterUID}})
+	}
+
+	return events
+}
+
+// scriptDoubleBuff: DoubleBuff(target)
+// Double a creature's current attack and health (for stompy decks)
+func scriptDoubleBuff(args []string, ctx *ScriptContext) []Event {
+	if len(args) < 1 {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "DoubleBuff requires 1 argument: target"}}}
+	}
+
+	targetRef := strings.ToLower(strings.TrimSpace(args[0]))
+	var target *FieldCard
+
+	if targetRef == "self" && ctx.Card != nil {
+		target = ctx.Card
+	} else if targetRef == "target" && ctx.Target != nil {
+		target = ctx.Target
+	}
+
+	if target == nil {
+		return []Event{{Type: "ScriptError", Data: map[string]interface{}{"error": "invalid target: " + targetRef}}}
+	}
+
+	currentAttack := target.GetAttack()
+	currentHealth := target.CurrentHealth
+
+	target.DamageModifier += currentAttack
+	target.HealthModifier += currentHealth
+	target.CurrentHealth += currentHealth
+
+	return []Event{{
+		Type: "ScriptDoubleBuff",
+		Data: map[string]interface{}{
+			"targetInstanceId": target.InstanceID,
+			"oldAttack":        currentAttack,
+			"oldHealth":        currentHealth,
+			"newAttack":        target.GetAttack(),
+			"newHealth":        target.CurrentHealth,
 		},
 	}}
 }

@@ -92,6 +92,16 @@ func (pool *ManaCost) Clear() {
 	pool.Colorless = 0
 }
 
+// Add adds mana to the pool (for refunding)
+func (pool *ManaCost) Add(mana ManaCost) {
+	pool.White += mana.White
+	pool.Blue += mana.Blue
+	pool.Black += mana.Black
+	pool.Red += mana.Red
+	pool.Green += mana.Green
+	pool.Colorless += mana.Colorless
+}
+
 type Card struct {
 	ID                 int      `json:"ID"`
 	Name               string   `json:"Name"`
