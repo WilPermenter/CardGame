@@ -146,6 +146,8 @@ func executeFunction(funcName string, args []string, ctx *ScriptContext) []Event
 		return scriptDiscard(args, ctx)
 	case "destroy":
 		return scriptDestroy(args, ctx)
+	case "destroycreature":
+		return scriptDestroy(args, ctx)
 	case "damagecreature":
 		return scriptDamageCreature(args, ctx)
 	case "tapcreature":
